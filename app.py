@@ -145,12 +145,22 @@ function render(){
 }
 
 function renderUpload(){
-  const zs=[{k:'warehouse',i:'⬡',l:'Warehouse',d:'Polygon vertices'},{k:'obstacles',i:'⊘',l:'Obstacles',d:'Blocked areas'},{k:'ceiling',i:'△',l:'Ceiling',d:'Height profile'},{k:'bays',i:'▦',l:'Bay Types',d:'Available racks'}];
-  const ok=Object.values(S.files).every(Boolean);
+  const zs=[
+    {k:'warehouse',i:'⬡',l:'Warehouse',d:'Polygon vertices'},
+    {k:'obstacles',i:'⊘',l:'Obstacles',d:'Blocked areas'},
+    {k:'ceiling',i:'△',l:'Ceiling',d:'Height profile'},
+    {k:'bays',i:'▦',l:'Bay Types',d:'Available racks'}
+  ];
+
+  const ok = Object.values(S.files).every(v => v !== null);
+
   return `<div class="up-pg ai"><div class="up-t">Drop your warehouse files</div><div class="up-s">Upload the 4 CSV files to optimize bay placement</div>
-  <div class="up-gr">${zs.map(z=>`<div class="dz ${S.files[z.k]?'ok':''}" id="z-${z.k}" ondragover="event.preventDefault()" ondrop="hDrop(event,'${z.k}')">
-  <input type="file" accept=".csv,.txt" id="f-${z.k}" style="display:none" onchange="hFile('${z.k}',this)">
-  <div class="ic">${S.files[z.k]?'✓':z.i}</div><div class="lb" style="color:${S.files[z.k]?'var(--ok)':'var(--txt)'}">${z.l}</div><div class="ds">${S.files[z.k]?'Loaded ✓':z.d}</div></div>`).join('')}</div>
+  <div class="up-gr">${zs.map(z=>{
+    const loaded = S.files[z.k] !== null;
+    return `<div class="dz ${loaded?'ok':''}" id="z-${z.k}" ondragover="event.preventDefault()" ondrop="hDrop(event,'${z.k}')">
+    <input type="file" accept=".csv,.txt" id="f-${z.k}" style="display:none" onchange="hFile('${z.k}',this)">
+    <div class="ic">${loaded?'✓':z.i}</div><div class="lb" style="color:${loaded?'var(--ok)':'var(--txt)'}">${z.l}</div><div class="ds">${loaded?'Loaded ✓':z.d}</div></div>`;
+  }).join('')}</div>
   <div class="up-ac"><button class="btn btn-p" ${ok?'':'disabled'} onclick="go()">⚡ Optimize Warehouse</button><button class="btn btn-g btn-sm" onclick="ldEx()">Load Example Data</button></div></div>`;
 }
 function bindUpload(){['warehouse','obstacles','ceiling','bays'].forEach(k=>{const z=document.getElementById('z-'+k);if(z)z.addEventListener('click',()=>document.getElementById('f-'+k).click());});}
