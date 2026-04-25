@@ -27,69 +27,6 @@ from typing import List, Optional, Tuple
 EPS = 1e-6
 TOUCH_EPS = 1.0  # An overlap area smaller than this is treated as "just touching".
 
-# Angles to explore: axis-aligned + diagonals + custom
-ALL_ROTATIONS = (0, 45, 90, 135, 170, 180, 215, 270)
-AA_ROTATIONS  = (0, 90, 180, 270)
-
-
-# ---------------------------------------------------------------------------
-# Rotated-rectangle geometry helpers
-# ---------------------------------------------------------------------------
-
-def _rot_corners(w, d, cos_a, sin_a):
-    """4 corners of a w*d rect rotated by angle, origin at bottom-left."""
-    return (
-        (0.0, 0.0),
-        (w * cos_a, w * sin_a),
-        (w * cos_a - d * sin_a, w * sin_a + d * cos_a),
-        (-d * sin_a, d * cos_a),
-    )
-
-def _gap_rot_corners(w, d, gap, cos_a, sin_a):
-    """Gap strip from depth d to d+gap, across width w, rotated."""
-    dg = d + gap
-    return (
-        (-d * sin_a, d * cos_a),
-        (w * cos_a - d * sin_a, w * sin_a + d * cos_a),
-        (w * cos_a - dg * sin_a, w * sin_a + dg * cos_a),
-        (-dg * sin_a, dg * cos_a),
-    )
-
-def _corners_aabb(corners):
-    x0 = x1 = corners[0][0]
-    y0 = y1 = corners[0][1]
-    for cx, cy in corners[1:]:
-        if cx < x0: x0 = cx
-        elif cx > x1: x1 = cx
-        if cy < y0: y0 = cy
-        elif cy > y1: y1 = cy
-    return (x0, y0, x1, y1)
-
-def _sat_overlap(ca, cb, eps=TOUCH_EPS):
-    """SAT overlap test for two convex quads."""
-    for poly in (ca, cb):
-        n = len(poly)
-        for i in range(n):
-            j = (i + 1) % n
-            nx = -(poly[j][1] - poly[i][1])
-            ny = poly[j][0] - poly[i][0]
-            min_a = max_a = nx * ca[0][0] + ny * ca[0][1]
-            for c in ca[1:]:
-                p = nx * c[0] + ny * c[1]
-                if p < min_a: min_a = p
-                elif p > max_a: max_a = p
-            min_b = max_b = nx * cb[0][0] + ny * cb[0][1]
-            for c in cb[1:]:
-                p = nx * c[0] + ny * c[1]
-                if p < min_b: min_b = p
-                elif p > max_b: max_b = p
-            if max_a <= min_b + eps or max_b <= min_a + eps:
-                return False
-    return True
-
-def _aa_corners(x0, y0, x1, y1):
-    return ((x0, y0), (x1, y0), (x1, y1), (x0, y1))
-
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -97,106 +34,125 @@ def _aa_corners(x0, y0, x1, y1):
 
 @dataclass
 class BayType:
-    id: int; w: float; d: float; h: float
-    gap: float; n_loads: int; price: float
+    id: int
+    w: float
+    d: float
+    h: float
+    gap: float
+    n_loads: int
+    price: float
 
     @property
     def area(self) -> float:
         return self.w * self.d
 
     def value_density(self) -> float:
+        # Lower is better: cheap-per-load AND big bays preferred.
         return (self.price / max(self.n_loads, 1)) / max(self.area, 1.0)
 
 
 @dataclass
 class BayCandidate:
-    """A bay type with one specific orientation baked in."""
+    """A bay type with one specific orientation already baked in."""
     type_id: int
-    fp_w: float       # AABB width
-    fp_d: float       # AABB depth
+    fp_w: float       # footprint extent along +x
+    fp_d: float       # footprint extent along +y
     h: float
     gap: float
-    gap_dir: int      # 0:+y, 1:+x, 2:-y, 3:-x (only meaningful for AA)
-    rotation: int     # degrees
+    gap_dir: int      # 0:+y, 1:+x, 2:-y, 3:-x
+    rotation: int     # 0/90/180/270  (for the output CSV)
     n_loads: int
     price: float
-    is_aa: bool = True
-    real_area: float = 0.0
-    local_fp: object = None     # tuple of 4 (x,y) for rotated; None for AA
-    local_gap: object = None    # tuple of 4 (x,y) or None
 
     @property
     def fp_area(self) -> float:
-        return self.real_area if self.real_area > 0 else self.fp_w * self.fp_d
+        return self.fp_w * self.fp_d
 
 
 @dataclass
 class PlacedBay:
     cand: BayCandidate
-    fp_x0: float;  fp_y0: float     # AABB
-    fp_x1: float;  fp_y1: float
-    gap_bounds: Optional[Tuple[float, float, float, float]]
-    fp_corners: object = None       # tuple of 4 (x,y) — only for rotated bays
-    gap_corners_rt: object = None   # tuple of 4 (x,y) — only for rotated bays
+    fp_x0: float
+    fp_y0: float
+    fp_x1: float
+    fp_y1: float
+    gap_bounds: Optional[Tuple[float, float, float, float]]  # may be None
+
+    # ---- properties that mirror the old solver's PlacedBay API -----------
+    @property
+    def type_id(self) -> int:
+        return self.cand.type_id
 
     @property
-    def type_id(self): return self.cand.type_id
-    @property
-    def w(self): return self.cand.fp_w
-    @property
-    def d(self): return self.cand.fp_d
-    @property
-    def h(self): return self.cand.h
-    @property
-    def n_loads(self): return self.cand.n_loads
-    @property
-    def price(self): return self.cand.price
-    @property
-    def gap(self): return self.cand.gap
-    @property
-    def rotation(self): return self.cand.rotation
+    def w(self) -> float:
+        # "width" as listed in types_of_bays.csv (pre-rotation)
+        return self.cand.fp_w if self.cand.rotation in (0, 180) else self.cand.fp_d
 
     @property
-    def x(self):
-        if self.cand.is_aa:
-            r = self.cand.rotation
-            if r == 0:   return self.fp_x0
-            if r == 90:  return self.fp_x1
-            if r == 180: return self.fp_x1
+    def d(self) -> float:
+        return self.cand.fp_d if self.cand.rotation in (0, 180) else self.cand.fp_w
+
+    @property
+    def h(self) -> float:
+        return self.cand.h
+
+    @property
+    def n_loads(self) -> int:
+        return self.cand.n_loads
+
+    @property
+    def price(self) -> float:
+        return self.cand.price
+
+    @property
+    def gap(self) -> float:
+        return self.cand.gap
+
+    @property
+    def rotation(self) -> int:
+        return self.cand.rotation
+
+    @property
+    def x(self) -> float:
+        # Pre-rotation origin point (matches the slide convention).
+        r = self.cand.rotation
+        if r == 0:
             return self.fp_x0
-        return self.fp_x0
+        if r == 90:
+            return self.fp_x1
+        if r == 180:
+            return self.fp_x1
+        return self.fp_x0  # 270
 
     @property
-    def y(self):
-        if self.cand.is_aa:
-            r = self.cand.rotation
-            if r == 0:   return self.fp_y0
-            if r == 90:  return self.fp_y0
-            if r == 180: return self.fp_y1
+    def y(self) -> float:
+        r = self.cand.rotation
+        if r == 0:
+            return self.fp_y0
+        if r == 90:
+            return self.fp_y0
+        if r == 180:
             return self.fp_y1
-        return self.fp_y0
+        return self.fp_y1  # 270
 
     @property
-    def area(self):
-        return self.cand.fp_area
+    def area(self) -> float:
+        return (self.fp_x1 - self.fp_x0) * (self.fp_y1 - self.fp_y0)
 
     def to_dict(self) -> dict:
-        if self.fp_corners is not None:
-            fc = self.fp_corners
-            fp = [fc[0], fc[1], fc[2], fc[3], fc[0]]
-        else:
-            fp = [
-                (self.fp_x0, self.fp_y0), (self.fp_x1, self.fp_y0),
-                (self.fp_x1, self.fp_y1), (self.fp_x0, self.fp_y1),
-                (self.fp_x0, self.fp_y0),
-            ]
+        fp = [
+            (self.fp_x0, self.fp_y0),
+            (self.fp_x1, self.fp_y0),
+            (self.fp_x1, self.fp_y1),
+            (self.fp_x0, self.fp_y1),
+            (self.fp_x0, self.fp_y0),
+        ]
         gp_coords = []
-        if self.gap_corners_rt is not None:
-            gc = self.gap_corners_rt
-            gp_coords = [gc[0], gc[1], gc[2], gc[3], gc[0]]
-        elif self.gap_bounds is not None:
+        if self.gap_bounds is not None:
             gx0, gy0, gx1, gy1 = self.gap_bounds
-            gp_coords = [(gx0, gy0), (gx1, gy0), (gx1, gy1), (gx0, gy1), (gx0, gy0)]
+            gp_coords = [
+                (gx0, gy0), (gx1, gy0), (gx1, gy1), (gx0, gy1), (gx0, gy0),
+            ]
 
         return {
             "id": self.type_id,
@@ -312,87 +268,40 @@ def rect_in_polygon(rect, v_edges, h_edges, poly_bbox):
 # Bay candidates and placement helpers
 # ---------------------------------------------------------------------------
 
-def expand_candidates(bay_types: List[BayType], rotations=AA_ROTATIONS) -> List[BayCandidate]:
+def expand_candidates(bay_types: List[BayType], rotations=(0, 90, 180, 270)) -> List[BayCandidate]:
     """Expand each bay type into one BayCandidate per allowed rotation."""
     cands = []
     for bt in bay_types:
         for rot in rotations:
-            is_aa = (rot % 90 == 0)
-            angle_rad = math.radians(rot)
-            cos_a = math.cos(angle_rad)
-            sin_a = math.sin(angle_rad)
-
-            if is_aa:
-                if rot in (0, 180):
-                    fp_w, fp_d = bt.w, bt.d
-                else:
-                    fp_w, fp_d = bt.d, bt.w
-                gap_dir = {0: 0, 90: 1, 180: 2, 270: 3}[rot]
-                cands.append(BayCandidate(
-                    type_id=bt.id, fp_w=fp_w, fp_d=fp_d, h=bt.h, gap=bt.gap,
-                    gap_dir=gap_dir, rotation=rot,
-                    n_loads=bt.n_loads, price=bt.price,
-                    is_aa=True, real_area=bt.w * bt.d,
-                ))
+            if rot in (0, 180):
+                fp_w, fp_d = bt.w, bt.d
             else:
-                local_fp = _rot_corners(bt.w, bt.d, cos_a, sin_a)
-                aabb = _corners_aabb(local_fp)
-                fp_w = aabb[2] - aabb[0]
-                fp_d = aabb[3] - aabb[1]
-                local_gap = None
-                if bt.gap > 0:
-                    local_gap = _gap_rot_corners(bt.w, bt.d, bt.gap, cos_a, sin_a)
-                cands.append(BayCandidate(
-                    type_id=bt.id, fp_w=fp_w, fp_d=fp_d, h=bt.h, gap=bt.gap,
-                    gap_dir=0, rotation=rot,
-                    n_loads=bt.n_loads, price=bt.price,
-                    is_aa=False, real_area=bt.w * bt.d,
-                    local_fp=local_fp, local_gap=local_gap,
-                ))
+                fp_w, fp_d = bt.d, bt.w
+            gap_dir = {0: 0, 90: 1, 180: 2, 270: 3}[rot]
+            cands.append(BayCandidate(
+                type_id=bt.id, fp_w=fp_w, fp_d=fp_d, h=bt.h, gap=bt.gap,
+                gap_dir=gap_dir, rotation=rot,
+                n_loads=bt.n_loads, price=bt.price,
+            ))
     return cands
 
 
 def make_placed(cand: BayCandidate, x0: float, y0: float) -> PlacedBay:
-    """Build a PlacedBay where (x0,y0) is the bottom-left of the AABB."""
-    if cand.is_aa:
-        x1 = x0 + cand.fp_w
-        y1 = y0 + cand.fp_d
-        if cand.gap > 0:
-            if cand.gap_dir == 0:
-                gp = (x0, y1, x1, y1 + cand.gap)
-            elif cand.gap_dir == 1:
-                gp = (x1, y0, x1 + cand.gap, y1)
-            elif cand.gap_dir == 2:
-                gp = (x0, y0 - cand.gap, x1, y0)
-            else:
-                gp = (x0 - cand.gap, y0, x0, y1)
+    """Build a PlacedBay where (x0,y0) is the bottom-left of the footprint."""
+    x1 = x0 + cand.fp_w
+    y1 = y0 + cand.fp_d
+    if cand.gap > 0:
+        if cand.gap_dir == 0:
+            gp = (x0, y1, x1, y1 + cand.gap)
+        elif cand.gap_dir == 1:
+            gp = (x1, y0, x1 + cand.gap, y1)
+        elif cand.gap_dir == 2:
+            gp = (x0, y0 - cand.gap, x1, y0)
         else:
-            gp = None
-        return PlacedBay(cand=cand, fp_x0=x0, fp_y0=y0, fp_x1=x1, fp_y1=y1,
-                         gap_bounds=gp)
+            gp = (x0 - cand.gap, y0, x0, y1)
     else:
-        # Rotated: translate local corners to world space.
-        # x0, y0 is the bottom-left of the AABB, but local corners are
-        # relative to the rotation origin (0,0). Shift so AABB starts at (x0,y0).
-        local_aabb = _corners_aabb(cand.local_fp)
-        ox = x0 - local_aabb[0]
-        oy = y0 - local_aabb[1]
-        fp_corners = tuple((c[0] + ox, c[1] + oy) for c in cand.local_fp)
-        aabb = _corners_aabb(fp_corners)
-
-        gap_corners = None
-        gap_aabb = None
-        if cand.local_gap is not None:
-            gap_corners = tuple((c[0] + ox, c[1] + oy) for c in cand.local_gap)
-            gap_aabb = _corners_aabb(gap_corners)
-
-        return PlacedBay(
-            cand=cand,
-            fp_x0=aabb[0], fp_y0=aabb[1], fp_x1=aabb[2], fp_y1=aabb[3],
-            gap_bounds=gap_aabb,
-            fp_corners=fp_corners,
-            gap_corners_rt=gap_corners,
-        )
+        gp = None
+    return PlacedBay(cand=cand, fp_x0=x0, fp_y0=y0, fp_x1=x1, fp_y1=y1, gap_bounds=gp)
 
 
 # ---------------------------------------------------------------------------
@@ -503,18 +412,6 @@ class WarehouseSolver:
             and len(self.h_edges) == 2
         )
 
-        # Detect if ALL edges are axis-aligned (rectilinear polygon).
-        # If any edge is diagonal, rect_in_polygon doesn't work and we
-        # fall back to per-corner point-in-polygon checks.
-        n_verts = len(self.vertices)
-        self._is_rectilinear = True
-        for i in range(n_verts):
-            v0 = self.vertices[i]
-            v1 = self.vertices[(i + 1) % n_verts]
-            if abs(v0[0] - v1[0]) > EPS and abs(v0[1] - v1[1]) > EPS:
-                self._is_rectilinear = False
-                break
-
         # Polygon area via shoelace.
         n = len(self.vertices)
         s = 0.0
@@ -522,16 +419,23 @@ class WarehouseSolver:
             x0, y0 = self.vertices[i]
             x1, y1 = self.vertices[(i + 1) % n]
             s += x0 * y1 - x1 * y0
-        poly_area = abs(s) / 2
+        self.wh_area = abs(s) / 2
 
         # Obstacles in (x0, y0, x1, y1) form.
         self.obstacles = [(o[0], o[1], o[0] + o[2], o[1] + o[3]) for o in obstacles]
 
-        # Effective warehouse area = polygon area - total obstacle area.
-        # The Q formula uses this as the denominator: bays can never occupy
-        # obstacle space, so it shouldn't count toward the total.
-        obs_area = sum((ob[2] - ob[0]) * (ob[3] - ob[1]) for ob in self.obstacles)
-        self.wh_area = poly_area - obs_area
+        # Subtract obstacle areas that fall within the warehouse polygon from
+        # wh_area. The score formula uses warehouse_area as the usable floor
+        # space, so obstacles must be excluded.
+        for ob in self.obstacles:
+            ox0, oy0, ox1, oy1 = ob
+            # Clip obstacle to polygon bbox first (fast reject for out-of-bounds).
+            cx0 = max(ox0, self.min_x)
+            cy0 = max(oy0, self.min_y)
+            cx1 = min(ox1, self.max_x)
+            cy1 = min(oy1, self.max_y)
+            if cx0 < cx1 and cy0 < cy1:
+                self.wh_area -= (cx1 - cx0) * (cy1 - cy0)
         # Pre-bucket obstacles into a spatial grid so overlap queries can skip
         # the ones that are clearly far away. Only worth it when there are
         # several obstacles; for small counts the brute-force loop is fine.
@@ -569,13 +473,10 @@ class WarehouseSolver:
                     float(b[4]), int(b[5]), float(b[6]))
             for b in bay_types
         ]
-        # All axis-aligned candidates (for construction + fill).
-        self.all_candidates = expand_candidates(self.bay_types, rotations=AA_ROTATIONS)
-        # Primary candidates for shelf/column packing.
-        self.primary_candidates = expand_candidates(self.bay_types, rotations=AA_ROTATIONS)
-        # Extended set including rotated angles — used only in sweep_fill
-        # and gap_fill where odd-shaped gaps can benefit from rotated bays.
-        self.extended_candidates = expand_candidates(self.bay_types, rotations=ALL_ROTATIONS)
+        # All 4-rotation candidates
+        self.all_candidates = expand_candidates(self.bay_types)
+        # Only "primary" candidates (rotation 0 and 90) for shelf packing.
+        self.primary_candidates = expand_candidates(self.bay_types, rotations=(0, 90))
 
         # Smallest bay footprint dimensions — any free rect smaller than these
         # can never fit any bay, so we discard it early in _free_rectangles.
@@ -770,122 +671,8 @@ class WarehouseSolver:
                         return False
         return True
 
-    # ------------------------------------------------------------------
-    # Point-in-polygon (for rotated rectangle corners)
-    # ------------------------------------------------------------------
-    def _point_in_polygon(self, px, py):
-        """General point-in-polygon via ray casting against ALL edges."""
-        if px < self.min_x - EPS or px > self.max_x + EPS:
-            return False
-        if py < self.min_y - EPS or py > self.max_y + EPS:
-            return False
-        verts = self.vertices
-        n = len(verts)
-        inside = False
-        j = n - 1
-        for i in range(n):
-            xi, yi = verts[i]
-            xj, yj = verts[j]
-            if ((yi > py) != (yj > py)) and \
-               (px < (xj - xi) * (py - yi) / (yj - yi + 1e-12) + xi):
-                inside = not inside
-            j = i
-        return inside
-
-    # ------------------------------------------------------------------
-    # SAT-based placement check for rotated (non-AA) candidates
-    # ------------------------------------------------------------------
-    def _can_place_rotated(self, cand, x0, y0, placed, exclude_idx=None,
-                           placed_grid=None):
-        pb = make_placed(cand, x0, y0)
-        fp_c = pb.fp_corners  # 4-corner tuple
-
-        # Polygon containment: all 4 corners inside.
-        for cx, cy in fp_c:
-            if not self._point_in_polygon(cx, cy):
-                return False
-
-        # Ceiling: conservative check over the AABB.
-        if self.min_ceiling(pb.fp_x0, pb.fp_x1) < cand.h - EPS:
-            return False
-
-        # Gap corners containment.
-        gap_c = pb.gap_corners_rt
-        if gap_c is not None:
-            for cx, cy in gap_c:
-                if not self._point_in_polygon(cx, cy):
-                    return False
-
-        # Obstacles (SAT).
-        eps = TOUCH_EPS
-        for ob in self.obstacles:
-            ob_c = _aa_corners(ob[0], ob[1], ob[2], ob[3])
-            if _sat_overlap(fp_c, ob_c, eps):
-                return False
-            if gap_c is not None and _sat_overlap(gap_c, ob_c, eps):
-                return False
-
-        # Placed bays (use grid AABB for indexing, SAT for precision).
-        if placed_grid is not None:
-            # Query with combined AABB of footprint + gap.
-            qx0 = pb.fp_x0; qy0 = pb.fp_y0
-            qx1 = pb.fp_x1; qy1 = pb.fp_y1
-            if pb.gap_bounds is not None:
-                gb = pb.gap_bounds
-                if gb[0] < qx0: qx0 = gb[0]
-                if gb[1] < qy0: qy0 = gb[1]
-                if gb[2] > qx1: qx1 = gb[2]
-                if gb[3] > qy1: qy1 = gb[3]
-            indices = placed_grid.query(qx0, qy0, qx1, qy1)
-            for i in indices:
-                if i == exclude_idx or i >= len(placed):
-                    continue
-                p = placed[i]
-                p_fp_c = p.fp_corners if p.fp_corners else _aa_corners(
-                    p.fp_x0, p.fp_y0, p.fp_x1, p.fp_y1)
-                if _sat_overlap(fp_c, p_fp_c, eps):
-                    return False
-                # fp vs placed gap
-                p_gap_c = p.gap_corners_rt
-                if p_gap_c is not None:
-                    if _sat_overlap(fp_c, p_gap_c, eps):
-                        return False
-                elif p.gap_bounds is not None:
-                    if _sat_overlap(fp_c, _aa_corners(*p.gap_bounds), eps):
-                        return False
-                # gap vs placed footprint
-                if gap_c is not None:
-                    if _sat_overlap(gap_c, p_fp_c, eps):
-                        return False
-        else:
-            for i, p in enumerate(placed):
-                if i == exclude_idx:
-                    continue
-                p_fp_c = p.fp_corners if p.fp_corners else _aa_corners(
-                    p.fp_x0, p.fp_y0, p.fp_x1, p.fp_y1)
-                if _sat_overlap(fp_c, p_fp_c, eps):
-                    return False
-                p_gap_c = p.gap_corners_rt
-                if p_gap_c is not None:
-                    if _sat_overlap(fp_c, p_gap_c, eps):
-                        return False
-                elif p.gap_bounds is not None:
-                    if _sat_overlap(fp_c, _aa_corners(*p.gap_bounds), eps):
-                        return False
-                if gap_c is not None:
-                    if _sat_overlap(gap_c, p_fp_c, eps):
-                        return False
-        return True
-
-    # ------------------------------------------------------------------
-    # Axis-aligned placement check (original fast path)
-    # ------------------------------------------------------------------
     def can_place_cand(self, cand: BayCandidate, x0: float, y0: float, placed,
                        exclude_idx=None, placed_grid=None) -> bool:
-        # Non-axis-aligned candidates use the SAT-based path.
-        if not cand.is_aa:
-            return self._can_place_rotated(cand, x0, y0, placed,
-                                           exclude_idx, placed_grid)
         fp_x0 = x0
         fp_y0 = y0
         fp_x1 = x0 + cand.fp_w
@@ -896,16 +683,10 @@ class WarehouseSolver:
             if (fp_x0 < self.min_x - EPS or fp_y0 < self.min_y - EPS
                     or fp_x1 > self.max_x + EPS or fp_y1 > self.max_y + EPS):
                 return False
-        elif self._is_rectilinear:
+        else:
             if not rect_in_polygon((fp_x0, fp_y0, fp_x1, fp_y1),
                                    self.v_edges, self.h_edges, self.poly_bbox):
                 return False
-        else:
-            # General polygon: check all 4 corners.
-            for cx, cy in ((fp_x0, fp_y0), (fp_x1, fp_y0),
-                           (fp_x1, fp_y1), (fp_x0, fp_y1)):
-                if not self._point_in_polygon(cx, cy):
-                    return False
 
         # Ceiling.
         if self.min_ceiling(fp_x0, fp_x1) < cand.h - EPS:
@@ -930,15 +711,10 @@ class WarehouseSolver:
                 if (gp_x0 < self.min_x - EPS or gp_y0 < self.min_y - EPS
                         or gp_x1 > self.max_x + EPS or gp_y1 > self.max_y + EPS):
                     return False
-            elif self._is_rectilinear:
+            else:
                 if not rect_in_polygon((gp_x0, gp_y0, gp_x1, gp_y1),
                                        self.v_edges, self.h_edges, self.poly_bbox):
                     return False
-            else:
-                for cx, cy in ((gp_x0, gp_y0), (gp_x1, gp_y0),
-                               (gp_x1, gp_y1), (gp_x0, gp_y1)):
-                    if not self._point_in_polygon(cx, cy):
-                        return False
 
         # Obstacles — check both fp and gap in one pass.
         eps = TOUCH_EPS
@@ -1942,66 +1718,6 @@ class WarehouseSolver:
         best_q = self._q(best_solution)
 
         # ------------------------------------------------------------------
-        # Phase 2.5: try rotated angles (45°, 135°, 170°, 215°) in gaps.
-        # Short dedicated pass — only accept placements that improve Q.
-        # ------------------------------------------------------------------
-        rot_deadline = min(deadline - 2.0, time.time() + max(1.5, time_limit * 0.08))
-        if time.time() < rot_deadline:
-            rot_cands = sorted(
-                [c for c in self.extended_candidates if not c.is_aa],
-                key=lambda c: -(c.fp_area * c.n_loads / max(c.price, 1.0)),
-            )
-            if rot_cands:
-                # Collect anchors from the current layout.
-                x_anch = set()
-                y_anch = set()
-                for v in self.vertices:
-                    x_anch.add(v[0]); y_anch.add(v[1])
-                for ob in self.obstacles:
-                    x_anch.add(ob[0]); x_anch.add(ob[2])
-                    y_anch.add(ob[1]); y_anch.add(ob[3])
-                for p in best_solution:
-                    x_anch.add(p.fp_x0); x_anch.add(p.fp_x1)
-                    y_anch.add(p.fp_y0); y_anch.add(p.fp_y1)
-                xs = sorted(a for a in x_anch if self.min_x - EPS <= a <= self.max_x + EPS)
-                ys = sorted(a for a in y_anch if self.min_y - EPS <= a <= self.max_y + EPS)
-
-                placed_grid = self._build_placed_grid(best_solution)
-                cur_q = best_q
-                for y in ys:
-                    if time.time() >= rot_deadline:
-                        break
-                    for x in xs:
-                        if time.time() >= rot_deadline:
-                            break
-                        for c in rot_cands:
-                            if x + c.fp_w > self.max_x + EPS:
-                                continue
-                            if y + c.fp_d > self.max_y + EPS:
-                                continue
-                            if not self.can_place_cand(c, x, y, best_solution,
-                                                       placed_grid=placed_grid):
-                                continue
-                            pb = make_placed(c, x, y)
-                            best_solution.append(pb)
-                            new_idx = len(best_solution) - 1
-                            placed_grid.add(new_idx, pb.fp_x0, pb.fp_y0,
-                                           pb.fp_x1, pb.fp_y1)
-                            if pb.gap_bounds is not None:
-                                gb = pb.gap_bounds
-                                placed_grid.add(new_idx, gb[0], gb[1], gb[2], gb[3])
-                            self._grid_notify_appended(best_solution, placed_grid, pb)
-                            q = self._q(best_solution)
-                            if q < cur_q - EPS:
-                                cur_q = q
-                            else:
-                                best_solution.pop()
-                                self._grid_cache = None
-                                placed_grid = self._build_placed_grid(best_solution)
-                            break
-                best_q = self._q(best_solution)
-
-        # ------------------------------------------------------------------
         # Phase 3: LNS until the deadline.
         # ------------------------------------------------------------------
         iteration = 0
@@ -2137,9 +1853,6 @@ def solve_parallel(wh, obs, ceil, bt, time_limit: float = 28.0,
         for i in range(n_workers)
     ]
 
-    # Use spawn for cross-platform safety (macOS default since 3.8 is spawn
-    # anyway). On Linux fork would be faster; switch the context if the
-    # judge machine is Linux and you want the extra ~50ms.
     ctx = mp.get_context("spawn")
     with ctx.Pool(n_workers) as pool:
         results = pool.map(_worker_solve, args_list)

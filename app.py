@@ -57,11 +57,11 @@ async def solve_warehouse(
         bt = parse_bays((await bays.read()).decode())
 
         if solve_parallel is not None:
-            placed, stats = solve_parallel(wh, obs, ceil, bt, time_limit=29.0)
+            placed, stats = solve_parallel(wh, obs, ceil, bt, time_limit=37.0)
             return _build_response(placed, stats, wh, obs, ceil, bt, placed_are_dicts=True)
 
         solver = WarehouseSolver(wh, obs, ceil, bt)
-        placed, stats = solver.solve(time_limit=29.0)
+        placed, stats = solver.solve(time_limit=37.0)
         return _build_response(placed, stats, wh, obs, ceil, bt, placed_are_dicts=False)
 
     except Exception as e:
@@ -82,11 +82,11 @@ async def solve_text(
         bt = parse_bays(bays)
 
         if solve_parallel is not None:
-            placed, stats = solve_parallel(wh, obs, ceil, bt, time_limit=29.0)
+            placed, stats = solve_parallel(wh, obs, ceil, bt, time_limit=37.0)
             return _build_response(placed, stats, wh, obs, ceil, bt, placed_are_dicts=True)
 
         solver = WarehouseSolver(wh, obs, ceil, bt)
-        placed, stats = solver.solve(time_limit=29.0)
+        placed, stats = solver.solve(time_limit=37.0)
         return _build_response(placed, stats, wh, obs, ceil, bt, placed_are_dicts=False)
 
     except Exception as e:
