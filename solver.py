@@ -193,10 +193,11 @@ def rect_subtract(a, b):
     """Subtract rect b from a; returns 0..4 axis-aligned sub-rects."""
     ax0, ay0, ax1, ay1 = a
     bx0, by0, bx1, by1 = b
-    ix0 = max(ax0, bx0)
-    iy0 = max(ay0, by0)
-    ix1 = min(ax1, bx1)
-    iy1 = min(ay1, by1)
+    # inline max(ax0, bx0) etc.
+    ix0 = ax0 if ax0 > bx0 else bx0
+    iy0 = ay0 if ay0 > by0 else by0
+    ix1 = ax1 if ax1 < bx1 else bx1
+    iy1 = ay1 if ay1 < by1 else by1
     if ix0 >= ix1 or iy0 >= iy1:
         return [a]
     res = []
@@ -204,10 +205,13 @@ def rect_subtract(a, b):
         res.append((ax0, ay0, ax1, iy0))
     if iy1 < ay1 - EPS:
         res.append((ax0, iy1, ax1, ay1))
+    # The middle slabs need the inner clipping coordinates.
+    inner_y0 = ay0 if ay0 > iy0 else iy0
+    inner_y1 = ay1 if ay1 < iy1 else iy1
     if ax0 < ix0 - EPS:
-        res.append((ax0, max(ay0, iy0), ix0, min(ay1, iy1)))
+        res.append((ax0, inner_y0, ix0, inner_y1))
     if ix1 < ax1 - EPS:
-        res.append((ix1, max(ay0, iy0), ax1, min(ay1, iy1)))
+        res.append((ix1, inner_y0, ax1, inner_y1))
     return res
 
 
@@ -318,19 +322,24 @@ class SpatialGrid:
         self.y0 = bbox[1]
         self.buckets = {}  # (cx, cy) -> list[int]  (indices into external list)
 
-    def _cells(self, x0, y0, x1, y1):
+    def add(self, idx, x0, y0, x1, y1):
         c = self.cell
-        ox = self.x0
-        oy = self.y0
+        ox = self.x0; oy = self.y0
         cx0 = int((x0 - ox) // c)
         cy0 = int((y0 - oy) // c)
         cx1 = int((x1 - ox) // c)
         cy1 = int((y1 - oy) // c)
-        return cx0, cy0, cx1, cy1
-
-    def add(self, idx, x0, y0, x1, y1):
-        cx0, cy0, cx1, cy1 = self._cells(x0, y0, x1, y1)
         b = self.buckets
+        # Fast path: rect fits in one cell (very common for small bays vs
+        # cell size 1500). Avoids the nested loop entirely.
+        if cx0 == cx1 and cy0 == cy1:
+            key = (cx0, cy0)
+            lst = b.get(key)
+            if lst is None:
+                b[key] = [idx]
+            else:
+                lst.append(idx)
+            return
         for cx in range(cx0, cx1 + 1):
             for cy in range(cy0, cy1 + 1):
                 key = (cx, cy)
@@ -343,9 +352,35 @@ class SpatialGrid:
     def query(self, x0, y0, x1, y1):
         """Return the set of indices whose rectangle MIGHT overlap (x0..y1).
         False positives are OK; the caller filters with a precise check."""
-        cx0, cy0, cx1, cy1 = self._cells(x0, y0, x1, y1)
-        out = set()
+        c = self.cell
+        ox = self.x0; oy = self.y0
+        cx0 = int((x0 - ox) // c)
+        cy0 = int((y0 - oy) // c)
+        cx1 = int((x1 - ox) // c)
+        cy1 = int((y1 - oy) // c)
         b = self.buckets
+        # Fast path: query rect fits in one cell.
+        if cx0 == cx1 and cy0 == cy1:
+            return b.get((cx0, cy0), ())
+        # Fast path: 2 cells (very common for typical bay sizes vs 1500mm grid).
+        ncx = cx1 - cx0 + 1
+        ncy = cy1 - cy0 + 1
+        if ncx * ncy == 2:
+            a = b.get((cx0, cy0), ())
+            if cx0 != cx1:
+                bb = b.get((cx1, cy0), ())
+            else:
+                bb = b.get((cx0, cy1), ())
+            if not a:
+                return bb
+            if not bb:
+                return a
+            # Both non-empty — we must dedup. Use a set.
+            out = set(a)
+            out.update(bb)
+            return out
+        # General multi-cell query.
+        out = set()
         for cx in range(cx0, cx1 + 1):
             for cy in range(cy0, cy1 + 1):
                 lst = b.get((cx, cy))
@@ -367,6 +402,15 @@ class WarehouseSolver:
         self.min_x, self.max_x = min(xs), max(xs)
         self.min_y, self.max_y = min(ys), max(ys)
         self.poly_bbox = (self.min_x, self.min_y, self.max_x, self.max_y)
+
+        # Detect the common case: warehouse polygon IS just an axis-aligned
+        # rectangle (4 vertices). When True, rect_in_polygon collapses to a
+        # bbox check, eliminating the 2.17s the edge-cut + raycast costs.
+        self._is_rect_polygon = (
+            len(self.vertices) == 4
+            and len(self.v_edges) == 2
+            and len(self.h_edges) == 2
+        )
 
         # Polygon area via shoelace.
         n = len(self.vertices)
@@ -395,6 +439,21 @@ class WarehouseSolver:
         # A small dict cache eliminates redundant scans through self.ceiling.
         self._ceiling_cache = {}
 
+        # Pre-subtract obstacles from the polygon bbox once. _free_rectangles
+        # then only needs to subtract placed bays (which change every call).
+        rects = [self.poly_bbox]
+        for ob in self.obstacles:
+            bx0, by0, bx1, by1 = ob
+            new = []
+            for r in rects:
+                if (bx1 <= r[0] + EPS or r[2] <= bx0 + EPS
+                        or by1 <= r[1] + EPS or r[3] <= by0 + EPS):
+                    new.append(r)
+                else:
+                    new.extend(rect_subtract(r, ob))
+            rects = new
+        self._obs_subtracted_rects = rects
+
         # Bay types and candidates.
         self.bay_types = [
             BayType(int(b[0]), float(b[1]), float(b[2]), float(b[3]),
@@ -405,6 +464,15 @@ class WarehouseSolver:
         self.all_candidates = expand_candidates(self.bay_types)
         # Only "primary" candidates (rotation 0 and 90) for shelf packing.
         self.primary_candidates = expand_candidates(self.bay_types, rotations=(0, 90))
+
+        # Smallest bay footprint dimensions — any free rect smaller than these
+        # can never fit any bay, so we discard it early in _free_rectangles.
+        if self.all_candidates:
+            self._min_bay_w = min(c.fp_w for c in self.all_candidates)
+            self._min_bay_d = min(c.fp_d for c in self.all_candidates)
+        else:
+            self._min_bay_w = 0.0
+            self._min_bay_d = 0.0
 
     # ------------------------------------------------------------------
     # Ceiling
@@ -446,8 +514,14 @@ class WarehouseSolver:
         fp_x0 = fp[0]; fp_y0 = fp[1]; fp_x1 = fp[2]; fp_y1 = fp[3]
 
         # 1. Polygon containment.
-        if not rect_in_polygon(fp, self.v_edges, self.h_edges, self.poly_bbox):
-            return False
+        if self._is_rect_polygon:
+            # Bbox check is sufficient when the warehouse is just a rectangle.
+            if (fp_x0 < self.min_x - EPS or fp_y0 < self.min_y - EPS
+                    or fp_x1 > self.max_x + EPS or fp_y1 > self.max_y + EPS):
+                return False
+        else:
+            if not rect_in_polygon(fp, self.v_edges, self.h_edges, self.poly_bbox):
+                return False
         # 2. Ceiling.
         if self.min_ceiling(fp_x0, fp_x1) < h_required - EPS:
             return False
@@ -528,8 +602,13 @@ class WarehouseSolver:
         """Same optimisations as _free_for_fp but only checks against placed
         footprints (not gaps — gap-vs-gap is allowed)."""
         gp_x0 = gp[0]; gp_y0 = gp[1]; gp_x1 = gp[2]; gp_y1 = gp[3]
-        if not rect_in_polygon(gp, self.v_edges, self.h_edges, self.poly_bbox):
-            return False
+        if self._is_rect_polygon:
+            if (gp_x0 < self.min_x - EPS or gp_y0 < self.min_y - EPS
+                    or gp_x1 > self.max_x + EPS or gp_y1 > self.max_y + EPS):
+                return False
+        else:
+            if not rect_in_polygon(gp, self.v_edges, self.h_edges, self.poly_bbox):
+                return False
         eps = TOUCH_EPS
         if self._obs_grid is not None:
             for idx in self._obs_grid.query(gp_x0, gp_y0, gp_x1, gp_y1):
@@ -581,27 +660,192 @@ class WarehouseSolver:
 
     def can_place_cand(self, cand: BayCandidate, x0: float, y0: float, placed,
                        exclude_idx=None, placed_grid=None) -> bool:
-        fp = (x0, y0, x0 + cand.fp_w, y0 + cand.fp_d)
-        if not self._free_for_fp(fp, cand.h, placed, exclude_idx, placed_grid):
-            return False
-        if cand.gap > 0:
-            pb = make_placed(cand, x0, y0)
-            if not self._free_for_gap(pb.gap_bounds, placed, exclude_idx, placed_grid):
+        fp_x0 = x0
+        fp_y0 = y0
+        fp_x1 = x0 + cand.fp_w
+        fp_y1 = y0 + cand.fp_d
+
+        # Polygon containment for footprint.
+        if self._is_rect_polygon:
+            if (fp_x0 < self.min_x - EPS or fp_y0 < self.min_y - EPS
+                    or fp_x1 > self.max_x + EPS or fp_y1 > self.max_y + EPS):
                 return False
+        else:
+            if not rect_in_polygon((fp_x0, fp_y0, fp_x1, fp_y1),
+                                   self.v_edges, self.h_edges, self.poly_bbox):
+                return False
+
+        # Ceiling.
+        if self.min_ceiling(fp_x0, fp_x1) < cand.h - EPS:
+            return False
+
+        # Compute gap bounds inline (no PlacedBay allocation).
+        gap = cand.gap
+        has_gap = gap > 0
+        if has_gap:
+            gd = cand.gap_dir
+            if gd == 0:
+                gp_x0 = fp_x0; gp_y0 = fp_y1; gp_x1 = fp_x1; gp_y1 = fp_y1 + gap
+            elif gd == 1:
+                gp_x0 = fp_x1; gp_y0 = fp_y0; gp_x1 = fp_x1 + gap; gp_y1 = fp_y1
+            elif gd == 2:
+                gp_x0 = fp_x0; gp_y0 = fp_y0 - gap; gp_x1 = fp_x1; gp_y1 = fp_y0
+            else:
+                gp_x0 = fp_x0 - gap; gp_y0 = fp_y0; gp_x1 = fp_x0; gp_y1 = fp_y1
+
+            # Polygon containment for gap.
+            if self._is_rect_polygon:
+                if (gp_x0 < self.min_x - EPS or gp_y0 < self.min_y - EPS
+                        or gp_x1 > self.max_x + EPS or gp_y1 > self.max_y + EPS):
+                    return False
+            else:
+                if not rect_in_polygon((gp_x0, gp_y0, gp_x1, gp_y1),
+                                       self.v_edges, self.h_edges, self.poly_bbox):
+                    return False
+
+        # Obstacles — check both fp and gap in one pass.
+        eps = TOUCH_EPS
+        if self._obs_grid is not None:
+            # Union of cells touched by fp and gap → single query.
+            if has_gap:
+                qx0 = fp_x0 if fp_x0 < gp_x0 else gp_x0
+                qy0 = fp_y0 if fp_y0 < gp_y0 else gp_y0
+                qx1 = fp_x1 if fp_x1 > gp_x1 else gp_x1
+                qy1 = fp_y1 if fp_y1 > gp_y1 else gp_y1
+            else:
+                qx0 = fp_x0; qy0 = fp_y0; qx1 = fp_x1; qy1 = fp_y1
+            for idx in self._obs_grid.query(qx0, qy0, qx1, qy1):
+                ob = self.obstacles[idx]
+                # fp vs obstacle
+                ix0 = ob[0] if ob[0] > fp_x0 else fp_x0
+                iy0 = ob[1] if ob[1] > fp_y0 else fp_y0
+                ix1 = ob[2] if ob[2] < fp_x1 else fp_x1
+                iy1 = ob[3] if ob[3] < fp_y1 else fp_y1
+                if ix0 < ix1 and iy0 < iy1 and (ix1 - ix0) * (iy1 - iy0) > eps:
+                    return False
+                # gap vs obstacle
+                if has_gap:
+                    ix0 = ob[0] if ob[0] > gp_x0 else gp_x0
+                    iy0 = ob[1] if ob[1] > gp_y0 else gp_y0
+                    ix1 = ob[2] if ob[2] < gp_x1 else gp_x1
+                    iy1 = ob[3] if ob[3] < gp_y1 else gp_y1
+                    if ix0 < ix1 and iy0 < iy1 and (ix1 - ix0) * (iy1 - iy0) > eps:
+                        return False
+        else:
+            for ob in self.obstacles:
+                ix0 = ob[0] if ob[0] > fp_x0 else fp_x0
+                iy0 = ob[1] if ob[1] > fp_y0 else fp_y0
+                ix1 = ob[2] if ob[2] < fp_x1 else fp_x1
+                iy1 = ob[3] if ob[3] < fp_y1 else fp_y1
+                if ix0 < ix1 and iy0 < iy1 and (ix1 - ix0) * (iy1 - iy0) > eps:
+                    return False
+                if has_gap:
+                    ix0 = ob[0] if ob[0] > gp_x0 else gp_x0
+                    iy0 = ob[1] if ob[1] > gp_y0 else gp_y0
+                    ix1 = ob[2] if ob[2] < gp_x1 else gp_x1
+                    iy1 = ob[3] if ob[3] < gp_y1 else gp_y1
+                    if ix0 < ix1 and iy0 < iy1 and (ix1 - ix0) * (iy1 - iy0) > eps:
+                        return False
+
+        # Placed bays — single grid query covering both fp and gap.
+        if placed_grid is not None:
+            if has_gap:
+                qx0 = fp_x0 if fp_x0 < gp_x0 else gp_x0
+                qy0 = fp_y0 if fp_y0 < gp_y0 else gp_y0
+                qx1 = fp_x1 if fp_x1 > gp_x1 else gp_x1
+                qy1 = fp_y1 if fp_y1 > gp_y1 else gp_y1
+            else:
+                qx0 = fp_x0; qy0 = fp_y0; qx1 = fp_x1; qy1 = fp_y1
+            indices = placed_grid.query(qx0, qy0, qx1, qy1)
+            for i in indices:
+                if i == exclude_idx or i >= len(placed):
+                    continue
+                p = placed[i]
+                # fp vs placed footprint
+                px0 = p.fp_x0; py0 = p.fp_y0; px1 = p.fp_x1; py1 = p.fp_y1
+                ix0 = px0 if px0 > fp_x0 else fp_x0
+                iy0 = py0 if py0 > fp_y0 else fp_y0
+                ix1 = px1 if px1 < fp_x1 else fp_x1
+                iy1 = py1 if py1 < fp_y1 else fp_y1
+                if ix0 < ix1 and iy0 < iy1 and (ix1 - ix0) * (iy1 - iy0) > eps:
+                    return False
+                # fp vs placed gap
+                gb = p.gap_bounds
+                if gb is not None:
+                    ix0 = gb[0] if gb[0] > fp_x0 else fp_x0
+                    iy0 = gb[1] if gb[1] > fp_y0 else fp_y0
+                    ix1 = gb[2] if gb[2] < fp_x1 else fp_x1
+                    iy1 = gb[3] if gb[3] < fp_y1 else fp_y1
+                    if ix0 < ix1 and iy0 < iy1 and (ix1 - ix0) * (iy1 - iy0) > eps:
+                        return False
+                # gap vs placed footprint (gap-vs-gap is allowed)
+                if has_gap:
+                    ix0 = px0 if px0 > gp_x0 else gp_x0
+                    iy0 = py0 if py0 > gp_y0 else gp_y0
+                    ix1 = px1 if px1 < gp_x1 else gp_x1
+                    iy1 = py1 if py1 < gp_y1 else gp_y1
+                    if ix0 < ix1 and iy0 < iy1 and (ix1 - ix0) * (iy1 - iy0) > eps:
+                        return False
+        else:
+            for i, p in enumerate(placed):
+                if i == exclude_idx:
+                    continue
+                px0 = p.fp_x0; py0 = p.fp_y0; px1 = p.fp_x1; py1 = p.fp_y1
+                ix0 = px0 if px0 > fp_x0 else fp_x0
+                iy0 = py0 if py0 > fp_y0 else fp_y0
+                ix1 = px1 if px1 < fp_x1 else fp_x1
+                iy1 = py1 if py1 < fp_y1 else fp_y1
+                if ix0 < ix1 and iy0 < iy1 and (ix1 - ix0) * (iy1 - iy0) > eps:
+                    return False
+                gb = p.gap_bounds
+                if gb is not None:
+                    ix0 = gb[0] if gb[0] > fp_x0 else fp_x0
+                    iy0 = gb[1] if gb[1] > fp_y0 else fp_y0
+                    ix1 = gb[2] if gb[2] < fp_x1 else fp_x1
+                    iy1 = gb[3] if gb[3] < fp_y1 else fp_y1
+                    if ix0 < ix1 and iy0 < iy1 and (ix1 - ix0) * (iy1 - iy0) > eps:
+                        return False
+                if has_gap:
+                    ix0 = px0 if px0 > gp_x0 else gp_x0
+                    iy0 = py0 if py0 > gp_y0 else gp_y0
+                    ix1 = px1 if px1 < gp_x1 else gp_x1
+                    iy1 = py1 if py1 < gp_y1 else gp_y1
+                    if ix0 < ix1 and iy0 < iy1 and (ix1 - ix0) * (iy1 - iy0) > eps:
+                        return False
         return True
 
     # Helper: build a SpatialGrid from a placed list. Caller owns it and
     # is responsible for adding new entries when placing more bays.
+    #
+    # Caching: we key by the id() of the placed list and its current length.
+    # If neither changed, we return the cached grid; otherwise rebuild. This
+    # eliminates the 2000+ rebuilds per solve that _fill_rect was triggering
+    # (it iterates many free rectangles within a single _gap_fill pass, all
+    # against the same `placed` list).
     def _build_placed_grid(self, placed):
+        cache = getattr(self, "_grid_cache", None)
+        n = len(placed)
+        list_id = id(placed)
+        if cache is not None:
+            cached_id, cached_n, cached_grid = cache
+            if cached_id == list_id and cached_n == n:
+                return cached_grid
         if not placed:
-            return SpatialGrid(self.poly_bbox, cell=1500.0)
+            self._grid_cache = (id(placed), 0, SpatialGrid(self.poly_bbox, cell=1500.0))
+            return self._grid_cache[2]
         g = SpatialGrid(self.poly_bbox, cell=1500.0)
         for i, p in enumerate(placed):
             g.add(i, p.fp_x0, p.fp_y0, p.fp_x1, p.fp_y1)
             gb = p.gap_bounds
             if gb is not None:
                 g.add(i, gb[0], gb[1], gb[2], gb[3])
+        self._grid_cache = (list_id, n, g)
         return g
+
+    def _grid_notify_appended(self, placed, grid, pb):
+        """After the caller has appended `pb` to `placed` and registered it in
+        `grid`, call this so the cache stays valid for the next get. Cheap."""
+        self._grid_cache = (id(placed), len(placed), grid)
 
     # ------------------------------------------------------------------
     # Scoring
@@ -735,6 +979,7 @@ class WarehouseSolver:
                     if pb.gap_bounds is not None:
                         gb = pb.gap_bounds
                         placed_grid.add(new_idx, gb[0], gb[1], gb[2], gb[3])
+                    self._grid_notify_appended(placed, placed_grid, pb)
                     # Skip anchors covered by the new bay.
                     while ai < len(anchors) and anchors[ai] < pb.fp_x1 - EPS:
                         ai += 1
@@ -768,6 +1013,7 @@ class WarehouseSolver:
                     if pb.gap_bounds is not None:
                         gb = pb.gap_bounds
                         placed_grid.add(new_idx, gb[0], gb[1], gb[2], gb[3])
+                    self._grid_notify_appended(placed, placed_grid, pb)
                     while ai < len(anchors) and anchors[ai] < pb.fp_x1 - EPS:
                         ai += 1
                     if ai >= len(anchors) or abs(anchors[ai] - pb.fp_x1) > EPS:
@@ -883,6 +1129,7 @@ class WarehouseSolver:
                     if pb.gap_bounds is not None:
                         gb = pb.gap_bounds
                         placed_grid.add(new_idx, gb[0], gb[1], gb[2], gb[3])
+                    self._grid_notify_appended(placed, placed_grid, pb)
                     while ai < len(anchors) and anchors[ai] < pb.fp_y1 - EPS:
                         ai += 1
                     if ai >= len(anchors) or abs(anchors[ai] - pb.fp_y1) > EPS:
@@ -913,6 +1160,7 @@ class WarehouseSolver:
                     if pb.gap_bounds is not None:
                         gb = pb.gap_bounds
                         placed_grid.add(new_idx, gb[0], gb[1], gb[2], gb[3])
+                    self._grid_notify_appended(placed, placed_grid, pb)
                     while ai < len(anchors) and anchors[ai] < pb.fp_y1 - EPS:
                         ai += 1
                     if ai >= len(anchors) or abs(anchors[ai] - pb.fp_y1) > EPS:
@@ -948,27 +1196,42 @@ class WarehouseSolver:
     # ------------------------------------------------------------------
     def _free_rectangles(self, placed: List[PlacedBay]) -> List[Tuple[float, float, float, float]]:
         """Compute approximate maximal free rectangles by subtracting all
-        obstacles + placed footprints + placed gaps from the polygon bbox.
-        For rectilinear polygons we also subtract the area outside the polygon
-        by re-using the polygon's vertical edges to slice the bbox."""
-        rects = [self.poly_bbox]
+        obstacles + placed footprints + placed gaps from the polygon bbox."""
+        # Start from the obstacle-subtracted bbox (computed once in __init__).
+        rects = list(self._obs_subtracted_rects)
 
-        # Slice out the area outside the polygon. We approximate by removing
-        # rectangles that are not inside the polygon: do a coarse vertical-strip
-        # decomposition of "outside the polygon".
-        # Simpler approach: subtract the obstacles + placed bodies, then drop
-        # any candidate rect whose centre is outside the polygon.
-        blockers = list(self.obstacles)
+        # Minimum useful rect size: the smallest bay dimension across all types.
+        # Any rect smaller than this can never fit a bay → discard early to
+        # prevent the rect list from blowing up during subtraction.
+        min_w = self._min_bay_w
+        min_d = self._min_bay_d
+
+        # Only subtract placed bays (obstacles are already subtracted).
         for p in placed:
-            blockers.append((p.fp_x0, p.fp_y0, p.fp_x1, p.fp_y1))
-            if p.gap_bounds is not None:
-                blockers.append(p.gap_bounds)
-
-        for b in blockers:
+            bx0 = p.fp_x0; by0 = p.fp_y0; bx1 = p.fp_x1; by1 = p.fp_y1
             new = []
             for r in rects:
-                new.extend(rect_subtract(r, b))
+                if (bx1 <= r[0] + EPS or r[2] <= bx0 + EPS
+                        or by1 <= r[1] + EPS or r[3] <= by0 + EPS):
+                    new.append(r)
+                else:
+                    for sr in rect_subtract(r, (bx0, by0, bx1, by1)):
+                        if (sr[2] - sr[0]) >= min_w and (sr[3] - sr[1]) >= min_d:
+                            new.append(sr)
             rects = new
+            gb = p.gap_bounds
+            if gb is not None:
+                bx0 = gb[0]; by0 = gb[1]; bx1 = gb[2]; by1 = gb[3]
+                new = []
+                for r in rects:
+                    if (bx1 <= r[0] + EPS or r[2] <= bx0 + EPS
+                            or by1 <= r[1] + EPS or r[3] <= by0 + EPS):
+                        new.append(r)
+                    else:
+                        for sr in rect_subtract(r, (bx0, by0, bx1, by1)):
+                            if (sr[2] - sr[0]) >= min_w and (sr[3] - sr[1]) >= min_d:
+                                new.append(sr)
+                rects = new
 
         # Filter by polygon containment (each free rect must lie in polygon).
         good = []
@@ -1078,6 +1341,7 @@ class WarehouseSolver:
                     if pb.gap_bounds is not None:
                         gb = pb.gap_bounds
                         placed_grid.add(new_idx, gb[0], gb[1], gb[2], gb[3])
+                    self._grid_notify_appended(placed, placed_grid, pb)
                     improved = True
                     x = pb.fp_x1
                 else:
@@ -1101,6 +1365,7 @@ class WarehouseSolver:
                             if pb.gap_bounds is not None:
                                 gb = pb.gap_bounds
                                 placed_grid.add(new_idx, gb[0], gb[1], gb[2], gb[3])
+                            self._grid_notify_appended(placed, placed_grid, pb)
                             improved = True
                             x = pb.fp_x1
                             placed_filler = True
@@ -1184,6 +1449,7 @@ class WarehouseSolver:
                     if pb.gap_bounds is not None:
                         gb = pb.gap_bounds
                         placed_grid.add(new_idx, gb[0], gb[1], gb[2], gb[3])
+                    self._grid_notify_appended(placed, placed_grid, pb)
                     if only_q_improving:
                         q = self._q(placed)
                         if q < cur_q - EPS:
@@ -1199,6 +1465,7 @@ class WarehouseSolver:
                         else:
                             placed.pop()
                             rebuild_needed = True  # grid has stale entry
+                            self._grid_cache = None  # invalidate cache
                     else:
                         improved = True
                         x_anchors.update([pb.fp_x0, pb.fp_x1])
@@ -1247,7 +1514,10 @@ class WarehouseSolver:
                 placed[i] = best
                 cur_q = best_q
                 improved_any = True
-                # The bay at i changed → grid has stale bounds. Rebuild.
+                # The bay at i changed → grid has stale bounds. Length is
+                # unchanged so the cache would mistakenly hit; invalidate
+                # before rebuilding.
+                self._grid_cache = None
                 placed_grid = self._build_placed_grid(placed)
             i += 1
         return improved_any
@@ -1262,12 +1532,14 @@ class WarehouseSolver:
             if time.time() >= deadline:
                 break
             removed = placed.pop(i)
+            self._grid_cache = None  # placed mutated → cache invalid
             q = self._q(placed)
             if q < cur_q - EPS:
                 cur_q = q
                 improved = True
             else:
                 placed.insert(i, removed)
+                self._grid_cache = None
                 i += 1
         return improved
 

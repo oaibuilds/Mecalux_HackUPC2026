@@ -57,11 +57,11 @@ async def solve_warehouse(
         bt = parse_bays((await bays.read()).decode())
 
         if solve_parallel is not None:
-            placed, stats = solve_parallel(wh, obs, ceil, bt, time_limit=25.0)
+            placed, stats = solve_parallel(wh, obs, ceil, bt, time_limit=29.0)
             return _build_response(placed, stats, wh, obs, ceil, bt, placed_are_dicts=True)
 
         solver = WarehouseSolver(wh, obs, ceil, bt)
-        placed, stats = solver.solve(time_limit=25.0)
+        placed, stats = solver.solve(time_limit=29.0)
         return _build_response(placed, stats, wh, obs, ceil, bt, placed_are_dicts=False)
 
     except Exception as e:
@@ -82,11 +82,11 @@ async def solve_text(
         bt = parse_bays(bays)
 
         if solve_parallel is not None:
-            placed, stats = solve_parallel(wh, obs, ceil, bt, time_limit=25.0)
+            placed, stats = solve_parallel(wh, obs, ceil, bt, time_limit=29.0)
             return _build_response(placed, stats, wh, obs, ceil, bt, placed_are_dicts=True)
 
         solver = WarehouseSolver(wh, obs, ceil, bt)
-        placed, stats = solver.solve(time_limit=25.0)
+        placed, stats = solver.solve(time_limit=29.0)
         return _build_response(placed, stats, wh, obs, ceil, bt, placed_are_dicts=False)
 
     except Exception as e:
@@ -127,1128 +127,1161 @@ FRONTEND_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Warehouse Optimizer — HackUPC 2026</title>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Outfit:wght@300;400;600;700;900&display=swap" rel="stylesheet">
+<title>Warehouse Optimizer — Mecalux</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 
 <style>
+/* ─── Reset ───────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
 :root {
-  --bg:#070b14;
-  --bg2:#0d1524;
-  --srf:rgba(255,255,255,0.04);
-  --brd:rgba(255,255,255,0.08);
-  --txt:#e8edf5;
-  --dim:rgba(255,255,255,0.42);
-  --acc:#2a6fff;
-  --acc2:#ff6b35;
-  --ok:#2ed573;
-  --no:#ff4757;
+  --bg:        #f5f5f4;
+  --surface:   #ffffff;
+  --surface-2: #fafaf9;
+  --border:    #e5e5e4;
+  --border-2:  #d4d4d3;
+  --text-1:    #1a1a19;
+  --text-2:    #525251;
+  --text-3:    #8a8a88;
+  --accent:    #1d4ed8;
+  --danger:    #b91c1c;
+  --success:   #15803d;
+  --radius:    3px;
+  --font:      'Inter', system-ui, -apple-system, sans-serif;
 }
 
-* {
-  box-sizing:border-box;
-  margin:0;
-  padding:0;
+html {
+  min-height: 100%;
+  background: #f5f5f4;
 }
 
 body {
-  font-family:'Outfit',sans-serif;
-  background:
-    radial-gradient(circle at 48% 2%, rgba(135,170,255,0.30), transparent 18%),
-    radial-gradient(circle at 84% 18%, rgba(42,111,255,0.16), transparent 25%),
-    linear-gradient(145deg,#090e19,#141c2d 45%,#070b13);
-  color:var(--txt);
-  min-height:100vh;
-  overflow-x:hidden;
+  font-family: var(--font);
+  color: var(--text-1);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+  background: transparent;
 }
 
+/* Global warehouse background, behind all UI */
 body::before {
-  content:"";
-  position:fixed;
-  inset:0;
-  pointer-events:none;
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
   background:
-    linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
-  background-size:56px 56px;
-  opacity:.22;
-  mask-image:radial-gradient(circle at 50% 10%, black, transparent 72%);
+    url("/static/img/rack-bg.png") center center / cover no-repeat fixed;
+  filter: blur(5px) brightness(1.18) saturate(0.75);
+  transform: scale(1.03);
+  pointer-events: none;
 }
 
-.hdr {
-  margin:28px auto 0;
-  width:calc(100% - 64px);
-  max-width:1500px;
-  padding:22px 26px;
-  border:1px solid rgba(255,255,255,0.11);
-  border-radius:30px;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  background:
-    linear-gradient(180deg,rgba(255,255,255,0.075),rgba(255,255,255,0.025)),
-    rgba(12,18,31,0.82);
-  backdrop-filter:blur(24px);
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.12),
-    0 28px 80px rgba(0,0,0,0.36);
-  position:sticky;
-  top:18px;
-  z-index:100;
+/* Soft white layer to make the background brighter and less visible */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: rgba(255,255,255,0.72);
+  pointer-events: none;
 }
 
-.logo-g {
-  display:flex;
-  align-items:center;
-  gap:16px;
+/* ─── Header ──────────────────────────────────────────────── */
+.header {
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 
-.logo-i {
-  width:50px;
-  height:50px;
-  border-radius:16px;
-  background:
-    radial-gradient(circle at 30% 25%,rgba(255,255,255,0.65),transparent 24%),
-    linear-gradient(135deg,#ff7a3d,#2a6fff);
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-weight:900;
-  font-size:22px;
-  color:#fff;
-  box-shadow:0 12px 35px rgba(42,111,255,0.35);
+.header-logo svg { height: 20px; width: auto; display: block; }
+
+.header-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  flex-shrink: 0;
 }
 
-.logo-t {
-  font-size:21px;
-  font-weight:800;
-  letter-spacing:-0.4px;
+.header-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
 }
 
-.logo-s {
-  font-size:11px;
-  color:rgba(255,255,255,0.44);
-  letter-spacing:1.6px;
-  text-transform:uppercase;
-}
+.header-spacer { flex: 1; }
 
+.header-actions { display: flex; align-items: center; gap: 8px; }
+
+/* ─── Buttons ─────────────────────────────────────────────── */
 .btn {
-  border:none;
-  padding:12px 22px;
-  border-radius:14px;
-  font-size:14px;
-  font-weight:800;
-  cursor:pointer;
-  font-family:'Outfit';
-  letter-spacing:0.2px;
-  transition:all .22s;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 14px;
+  height: 32px;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+  white-space: nowrap;
+  line-height: 1;
 }
 
-.btn-p {
-  background:linear-gradient(135deg,#5b8cff,#185cff);
-  color:#fff;
-  box-shadow:0 12px 34px rgba(42,111,255,0.32);
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.btn-primary:hover:not(:disabled) { background: #1e40af; }
+.btn-primary:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.btn-default {
+  background: var(--surface);
+  color: var(--text-1);
+  border-color: var(--border-2);
+}
+.btn-default:hover { background: var(--surface-2); border-color: var(--text-3); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-2);
+  border-color: transparent;
+}
+.btn-ghost:hover { background: var(--bg); color: var(--text-1); }
+
+/* ─── Upload view ─────────────────────────────────────────── */
+.upload-view {
+  max-width: 680px;
+  margin: 60px auto 0;
+  padding: 0 24px 60px;
 }
 
-.btn-p:hover {
-  transform:translateY(-2px);
-  box-shadow:0 16px 44px rgba(42,111,255,0.44);
+.upload-eyebrow {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 8px;
 }
 
-.btn-p:disabled {
-  opacity:.35;
-  cursor:not-allowed;
-  transform:none;
-  box-shadow:none;
+.upload-title {
+  font-size: 21px;
+  font-weight: 600;
+  color: var(--text-1);
+  letter-spacing: -0.015em;
+  margin-bottom: 4px;
 }
 
-.btn-g {
-  background:linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03));
-  color:var(--txt);
-  border:1px solid rgba(255,255,255,0.10);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,0.08);
+.upload-desc {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-bottom: 32px;
 }
 
-.btn-g:hover {
-  background:rgba(255,255,255,0.10);
+.upload-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 20px;
 }
 
-.btn-sm {
-  padding:9px 16px;
-  font-size:13px;
+.dropzone {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  cursor: pointer;
+  transition: border-color 0.1s, background 0.1s;
+  user-select: none;
 }
 
-.up-pg {
-  max-width:920px;
-  margin:38px auto 0;
-  padding:56px 24px;
-  border:1px solid rgba(255,255,255,0.09);
-  border-radius:34px;
-  background:
-    linear-gradient(180deg,rgba(255,255,255,0.055),rgba(255,255,255,0.018)),
-    rgba(10,16,28,0.70);
-  backdrop-filter:blur(24px);
-  box-shadow:0 32px 90px rgba(0,0,0,0.36);
+.dropzone:hover { border-color: var(--accent); }
+
+.dropzone.loaded {
+  border-color: #86efac;
+  background: #f0fdf4;
 }
 
-.up-t {
-  font-size:46px;
-  font-weight:900;
-  letter-spacing:-1.5px;
-  text-align:center;
-  margin-bottom:10px;
-  background:linear-gradient(135deg,#fff,#b9c8ff 60%,rgba(255,255,255,0.55));
-  -webkit-background-clip:text;
-  -webkit-text-fill-color:transparent;
+.dz-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 3px;
 }
 
-.up-s {
-  text-align:center;
-  color:var(--dim);
-  font-size:16px;
-  margin-bottom:44px;
+.dz-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
 }
 
-.up-gr {
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:16px;
-  margin-bottom:40px;
+.dz-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--success);
 }
 
-.dz {
-  border:1px solid rgba(255,255,255,0.10);
-  border-radius:22px;
-  padding:28px 20px;
-  text-align:center;
-  cursor:pointer;
-  transition:all .25s;
-  background:
-    radial-gradient(circle at 85% 15%,rgba(42,111,255,0.12),transparent 32%),
-    linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02));
-  box-shadow:inset 0 1px 0 rgba(255,255,255,0.08);
+.dz-desc { font-size: 12px; color: var(--text-3); }
+
+.dz-cta {
+  font-size: 12px;
+  color: var(--accent);
+  margin-top: 8px;
 }
 
-.dz:hover {
-  border-color:rgba(92,140,255,0.62);
-  background:rgba(42,111,255,0.09);
-  box-shadow:0 18px 44px rgba(42,111,255,0.12);
-  transform:translateY(-2px);
+/* Rack visual on upload page */
+.rack-vis {
+  width: 180px;
+  margin: 0 auto 32px;
+  position: relative;
 }
 
-.dz.ok {
-  border-color:rgba(46,213,115,0.55);
-  background:rgba(46,213,115,0.06);
+.rack-frame {
+  position: relative;
+  height: 140px;
+  border-left: 3px solid var(--border-2);
+  border-right: 3px solid var(--border-2);
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0;
 }
 
-.dz .ic {
-  font-size:34px;
-  margin-bottom:8px;
+.rack-shelf {
+  flex: 1;
+  border-top: 2px solid var(--border-2);
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 8px 3px;
 }
 
-.dz .lb {
-  font-weight:800;
-  font-size:16px;
-  margin-bottom:4px;
+.rack-pallet {
+  width: 100%;
+  height: calc(100% - 5px);
+  border-radius: 2px;
+  opacity: 0;
+  transform: scaleX(0);
+  transition: all 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-.dz .ds {
-  font-size:12px;
-  color:var(--dim);
+.rack-pallet.from-left  { transform-origin: left center; }
+.rack-pallet.from-right { transform-origin: right center; }
+
+.rack-pallet.in {
+  opacity: 1;
+  transform: scaleX(1);
 }
 
-.up-ac {
-  text-align:center;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  gap:14px;
+.rack-pallet:nth-child(1) { background: var(--accent); }
+.rack-pallet:nth-child(1).in { background: #3b82f6; }
+.rack-shelf:nth-child(2) .rack-pallet.in { background: #8b5cf6; }
+.rack-shelf:nth-child(3) .rack-pallet.in { background: #f59e0b; }
+.rack-shelf:nth-child(4) .rack-pallet.in { background: #10b981; }
+
+.rack-base {
+  width: calc(100% + 16px);
+  height: 3px;
+  background: var(--border-2);
+  margin: 0 -8px;
+  border-radius: 0 0 2px 2px;
 }
 
-.sv-pg {
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  justify-content:center;
-  height:70vh;
-  gap:20px;
+.upload-footer { display: flex; align-items: center; gap: 10px; }
+
+/* ─── Solving / loading ───────────────────────────────────── */
+.solving-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: calc(100vh - 52px);
+  gap: 20px;
 }
 
-.spin {
-  width:74px;
-  height:74px;
-  border-radius:50%;
-  border:3px solid rgba(92,140,255,0.14);
-  border-top-color:#74a0ff;
-  animation:sp .7s linear infinite;
-  box-shadow:0 0 40px rgba(92,140,255,0.25);
+/* Stacking boxes animation */
+.stack-wrap {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  height: 88px;
+  gap: 3px;
+  overflow: hidden;
 }
 
-@keyframes sp { to { transform:rotate(360deg); } }
-@keyframes pu { 0%,100%{opacity:.35}50%{opacity:1} }
-@keyframes su { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
-.ai { animation:su .5s ease-out; }
-
-.rp {
-  display:flex;
-  flex-direction:column;
-  height:calc(100vh - 128px);
-  width:calc(100% - 64px);
-  max-width:1500px;
-  margin:18px auto 0;
-  border-radius:34px;
-  overflow:hidden;
-  border:1px solid rgba(255,255,255,0.09);
-  background:
-    linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.018)),
-    rgba(11,16,28,0.72);
-  backdrop-filter:blur(22px);
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.09),
-    0 34px 90px rgba(0,0,0,0.42);
+.s-box {
+  width: 44px;
+  height: 13px;
+  background: var(--accent);
+  border-radius: 2px;
+  opacity: 0;
 }
 
-.sb {
-  padding:20px 24px;
-  display:grid;
-  grid-template-columns:repeat(5,1fr);
-  gap:16px;
-  background:rgba(255,255,255,0.015);
-  border-bottom:1px solid rgba(255,255,255,0.07);
+.s-box:nth-child(1) { animation: stkL 3.2s 0.00s ease infinite; }
+.s-box:nth-child(2) { animation: stkR 3.2s 0.40s ease infinite; }
+.s-box:nth-child(3) { animation: stkL 3.2s 0.80s ease infinite; }
+.s-box:nth-child(4) { animation: stkR 3.2s 1.20s ease infinite; }
+
+@keyframes stkL {
+  0%   { opacity: 0; transform: translateX(-40px); }
+  8%   { opacity: 1; transform: translateX(0); }
+  62%  { opacity: 1; transform: translateX(0); }
+  75%  { opacity: 0; transform: translateX(0); }
+  100% { opacity: 0; transform: translateX(-40px); }
 }
 
-.sc {
-  background:
-    radial-gradient(circle at 80% 15%,rgba(92,140,255,0.16),transparent 30%),
-    linear-gradient(180deg,rgba(255,255,255,0.07),rgba(255,255,255,0.025));
-  border:1px solid rgba(255,255,255,0.09);
-  border-radius:22px;
-  padding:20px 22px;
-  min-width:130px;
-  backdrop-filter:blur(16px);
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.08),
-    0 14px 32px rgba(0,0,0,0.22);
+@keyframes stkR {
+  0%   { opacity: 0; transform: translateX(40px); }
+  8%   { opacity: 1; transform: translateX(0); }
+  62%  { opacity: 1; transform: translateX(0); }
+  75%  { opacity: 0; transform: translateX(0); }
+  100% { opacity: 0; transform: translateX(40px); }
 }
 
-.sv {
-  font-size:31px;
-  font-weight:900;
-  font-family:'JetBrains Mono';
-  color:#74a0ff;
-  background:none;
-  -webkit-text-fill-color:#74a0ff;
-  text-shadow:0 0 22px rgba(80,130,255,0.35);
+.solving-text {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-1);
 }
 
-.sl {
-  font-size:10px;
-  text-transform:uppercase;
-  letter-spacing:3px;
-  color:rgba(255,255,255,0.38);
-  margin-top:7px;
-  font-weight:800;
+.solving-sub {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: -12px;
 }
 
-.ma {
-  flex:1;
-  display:flex;
-  min-height:0;
+/* ─── Result layout ───────────────────────────────────────── */
+.result-view {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 52px);
 }
 
-.vc {
-  flex:1;
-  padding:18px;
-  display:flex;
-  flex-direction:column;
-  min-height:0;
+/* Metrics */
+.metrics-bar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-shrink: 0;
 }
 
-.vf {
-  flex:1;
-  border-radius:28px;
-  overflow:hidden;
-  border:1px solid rgba(255,255,255,0.09);
-  min-height:0;
-  background:
-    radial-gradient(circle at 55% 12%,rgba(93,120,180,0.20),transparent 32%),
-    #080d17;
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.08),
-    inset 0 0 70px rgba(42,111,255,0.08),
-    0 22px 60px rgba(0,0,0,0.30);
+.metric {
+  flex: 1;
+  padding: 12px 20px 14px;
+  border-right: 1px solid var(--border);
+}
+.metric:last-child { border-right: none; }
+
+.metric-val {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+  line-height: 1.1;
 }
 
-.sp {
-  width:310px;
-  border-left:1px solid rgba(255,255,255,0.07);
-  padding:20px;
-  overflow-y:auto;
-  background:
-    linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.012)),
-    rgba(6,10,18,0.45);
+.metric-key {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 3px;
 }
 
-.sh {
-  font-size:11px;
-  font-weight:900;
-  text-transform:uppercase;
-  letter-spacing:2.6px;
-  color:rgba(255,255,255,0.42);
-  margin-bottom:14px;
+/* Body */
+.result-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
 }
 
-.li {
-  padding:13px 13px;
-  border-radius:18px;
-  background:
-    linear-gradient(180deg,rgba(255,255,255,0.055),rgba(255,255,255,0.02));
-  margin-bottom:10px;
-  border:1px solid rgba(255,255,255,0.07);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,0.06);
+/* Viz */
+.viz-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
 }
 
-.li .tp {
-  display:flex;
-  align-items:center;
-  gap:9px;
-  margin-bottom:5px;
+.viz-toolbar {
+  height: 40px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
-.ld {
-  width:13px;
-  height:13px;
-  border-radius:4px;
-  display:inline-block;
-  box-shadow:0 0 18px currentColor;
+.view-seg {
+  display: flex;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 
-.li .mt {
-  font-size:11px;
-  color:rgba(255,255,255,0.42);
-  font-family:'JetBrains Mono';
-  line-height:1.35;
+.vsb {
+  height: 28px;
+  padding: 0 14px;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 500;
+  background: transparent;
+  color: var(--text-2);
+  border: none;
+  border-right: 1px solid var(--border-2);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.vsb:last-child { border-right: none; }
+.vsb:hover:not(.active) { background: var(--bg); color: var(--text-1); }
+.vsb.active { background: var(--accent); color: #fff; }
+
+.viz-sp { flex: 1; }
+
+.viz-frame {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+  background: transparent;
 }
 
-.co {
-  font-size:10px;
-  font-family:'JetBrains Mono';
-  color:rgba(255,255,255,0.52);
-  background:rgba(0,0,0,0.28);
-  padding:12px;
-  border-radius:14px;
-  max-height:210px;
-  overflow:auto;
-  white-space:pre-wrap;
-  word-break:break-all;
-  border:1px solid rgba(255,255,255,0.07);
+.canvas3d { width: 100%; height: 100%; display: block; }
+
+/* Sidebar */
+.sidebar {
+  width: 272px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
 }
+
+.sb-block {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.sb-block:last-child { border-bottom: none; }
+
+.sb-head {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 12px;
+}
+
+/* Toggle */
+.tgl-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.tgl-label { font-size: 13px; color: var(--text-1); }
 
 .tgl {
-  display:flex;
-  align-items:center;
-  gap:9px;
-  margin:12px 0;
-  font-size:12px;
-  color:rgba(255,255,255,0.48);
-  cursor:pointer;
-  font-weight:600;
+  position: relative;
+  width: 32px;
+  height: 18px;
+  flex-shrink: 0;
 }
 
-.tgl input {
-  accent-color:#74a0ff;
+.tgl input { opacity: 0; position: absolute; width: 0; height: 0; }
+
+.tgl-track {
+  position: absolute;
+  inset: 0;
+  background: var(--border-2);
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.14s;
 }
 
-.view-tabs {
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:9px;
-  margin:12px 0 18px;
-  padding:6px;
-  border-radius:18px;
-  background:rgba(0,0,0,0.20);
-  border:1px solid rgba(255,255,255,0.06);
+.tgl input:checked ~ .tgl-track { background: var(--accent); }
+
+.tgl-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.14s;
 }
 
-.view-tab {
-  border:1px solid transparent;
-  background:transparent;
-  color:rgba(255,255,255,0.50);
-  padding:10px 10px;
-  border-radius:13px;
-  cursor:pointer;
-  font-family:'Outfit';
-  font-size:12px;
-  font-weight:900;
-  transition:all .22s;
+.tgl input:checked ~ .tgl-track::after { transform: translateX(14px); }
+
+/* Camera buttons */
+.cam-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
 }
 
-.view-tab:hover {
-  color:white;
-  background:rgba(255,255,255,0.06);
+.cam-btn {
+  flex: 1;
+  height: 28px;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.cam-btn:hover { background: var(--bg); color: var(--text-1); }
+
+/* Bay table */
+.bay-tbl { width: 100%; border-collapse: collapse; }
+
+.bay-tbl tr { border-bottom: 1px solid var(--border); }
+.bay-tbl tr:last-child { border-bottom: none; }
+
+.bay-tbl td { padding: 8px 0; font-size: 12px; vertical-align: top; }
+
+.bay-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  margin-right: 6px;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+  flex-shrink: 0;
 }
 
-.view-tab.active {
-  color:white;
-  background:
-    radial-gradient(circle at 22% 20%,rgba(255,255,255,0.30),transparent 22%),
-    linear-gradient(135deg,#5b8cff,#185cff);
-  border-color:rgba(140,170,255,0.45);
-  box-shadow:0 10px 28px rgba(42,111,255,0.30);
+.bay-id { font-weight: 600; color: var(--text-1); font-size: 13px; }
+
+.bay-spec {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
 }
 
-.canvas3d {
-  width:100%;
-  height:100%;
-  display:block;
-  background:radial-gradient(circle at 50% 20%,#101827,#060910 70%);
+.bay-ct {
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-3);
+  padding-left: 8px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.camera-buttons {
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:8px;
-  margin:8px 0 16px;
+/* CSV */
+.csv-pre {
+  font-family: 'SFMono-Regular', 'Consolas', 'Menlo', monospace;
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  max-height: 180px;
+  overflow-y: auto;
+  white-space: pre;
+  line-height: 1.55;
 }
 
-.mini-btn {
-  border:1px solid rgba(255,255,255,0.08);
-  background:linear-gradient(180deg,rgba(255,255,255,0.065),rgba(255,255,255,0.025));
-  color:rgba(255,255,255,0.72);
-  padding:9px 8px;
-  border-radius:12px;
-  cursor:pointer;
-  font-family:'Outfit';
-  font-size:11px;
-  font-weight:900;
+
+/* ─── Global glass / background integration ─────────────────── */
+.header,
+.metrics-bar,
+.viz-toolbar,
+.sidebar,
+.dropzone,
+.csv-pre {
+  background: rgba(255,255,255,0.78);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
-.mini-btn:hover {
-  color:white;
-  background:rgba(255,255,255,0.09);
+.result-view,
+.result-body,
+.viz-pane,
+.viz-frame,
+.solving-view,
+.upload-view {
+  background: transparent;
 }
 
-@media (max-width: 1100px) {
-  .sb {
-    grid-template-columns:repeat(2,1fr);
-  }
+.sb-block {
+  background: transparent;
+}
 
-  .sp {
-    width:280px;
-  }
+.btn-default,
+.cam-btn {
+  background: rgba(255,255,255,0.72);
+}
 
-  .hdr,
-  .rp {
-    width:calc(100% - 28px);
-  }
+.viz-frame {
+  background: transparent;
+}
+.custom-tooltip {
+  position: fixed;
+  z-index: 9999;
+  max-width: 260px;
+  padding: 10px 12px;
+  background: rgba(20, 24, 32, 0.92);
+  color: white;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(12px, 12px);
+  transition: opacity 0.08s ease;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+}
+
+.custom-tooltip.visible {
+  opacity: 1;
 }
 </style>
 </head>
-
 <body>
-<div class="hdr">
-  <div class="logo-g">
-    <div class="logo-i">W</div>
-    <div>
-      <div class="logo-t">Warehouse Optimizer</div>
-      <div class="logo-s">HackUPC 2026 · Mecalux Challenge</div>
-    </div>
+
+<header class="header">
+  <div class="header-logo">
+    <svg viewBox="0 0 180 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <!-- Blue shield block -->
+      <rect width="26" height="28" rx="2" fill="#1d4ed8"/>
+      <!-- Stylised M paths inside shield -->
+      <polyline points="5,22 5,7 13,16 21,7 21,22" stroke="white" stroke-width="2.5"
+        stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <!-- MECALUX wordmark -->
+      <text x="34" y="20" font-family="'Inter',system-ui,sans-serif"
+        font-size="13.5" font-weight="700" fill="#1a1a19" letter-spacing="1.8">MECALUX</text>
+    </svg>
   </div>
-  <div id="ha"></div>
-</div>
+  <div class="header-sep"></div>
+  <span class="header-title">Warehouse Optimizer</span>
+  <div class="header-spacer"></div>
+  <div class="header-actions" id="ha"></div>
+</header>
 
 <div id="app"></div>
+<div id="tooltip" class="custom-tooltip"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script src="/static/js/warehouse3d.js"></script>
 
 <script>
-const S={
-  step:'upload',
-  files:{warehouse:null,obstacles:null,ceiling:null,bays:null},
-  result:null,
-  showGaps:true,
-  showCeiling:true,
-  viewMode:'2d'
+const S = {
+  step: 'upload',
+  files: { warehouse: null, obstacles: null, ceiling: null, bays: null },
+  result: null,
+  showGaps: true,
+  showCeiling: true,
+  viewMode: '2d'
 };
 
-const BC=[
-  'rgba(255,107,53,0.55)',
-  'rgba(0,150,255,0.55)',
-  'rgba(46,213,115,0.55)',
-  'rgba(255,71,87,0.55)',
-  'rgba(165,94,234,0.55)',
-  'rgba(255,215,0,0.55)',
-  'rgba(0,210,211,0.55)',
-  'rgba(255,159,243,0.55)'
+const SWATCH = [
+  '#2563eb','#d97706','#16a34a','#dc2626',
+  '#7c3aed','#0891b2','#be185d','#65a30d'
 ];
 
-const BB=[
-  '#ff6b35',
-  '#0096ff',
-  '#2ed573',
-  '#ff4757',
-  '#a55eea',
-  '#ffd700',
-  '#00d2d3',
-  '#ff9ff3'
-];
-
-const EX={
-warehouse:'0, 0\n10000, 0\n10000, 3000\n3000, 3000\n3000, 10000\n0, 10000',
-obstacles:'750, 750, 750, 750\n8000, 2500, 1500, 300\n1500, 4200, 200, 4600',
-ceiling:'0, 3000\n3000, 2000\n6000, 3000',
-bays:'0, 800, 1200, 2800, 200, 4, 2000\n1, 1600, 1200, 2800, 200, 8, 2500\n2, 2400, 1200, 2800, 200, 12, 2800\n3, 800, 1000, 1800, 150, 3, 1800\n4, 1600, 1000, 1800, 150, 6, 2300\n5, 2400, 1000, 1800, 150, 9, 2600'
+const EX = {
+  warehouse: '0, 0\n10000, 0\n10000, 3000\n3000, 3000\n3000, 10000\n0, 10000',
+  obstacles:  '750, 750, 750, 750\n8000, 2500, 1500, 300\n1500, 4200, 200, 4600',
+  ceiling:    '0, 3000\n3000, 2000\n6000, 3000',
+  bays:       '0, 800, 1200, 2800, 200, 4, 2000\n1, 1600, 1200, 2800, 200, 8, 2500\n2, 2400, 1200, 2800, 200, 12, 2800\n3, 800, 1000, 1800, 150, 3, 1800\n4, 1600, 1000, 1800, 150, 6, 2300\n5, 2400, 1000, 1800, 150, 9, 2600'
 };
 
-window.setViewMode = (mode) => {
-  S.viewMode = mode;
-  render();
-};
+window.setViewMode = (m) => { S.viewMode = m; render(); };
 
-function render(){
-  const a=document.getElementById('app');
-  const h=document.getElementById('ha');
+/* ─── Render dispatcher ─────────────────────────────────────── */
+function render() {
+  const app = document.getElementById('app');
+  const ha  = document.getElementById('ha');
 
-  if(S.step==='upload'){
-    h.innerHTML='';
-    a.innerHTML=renderUpload();
+  if (S.step === 'upload') {
+    ha.innerHTML = '';
+    app.innerHTML = renderUpload();
     bindUpload();
-  }
-  else if(S.step==='solving'){
-    h.innerHTML='';
-    a.innerHTML='<div class="sv-pg ai"><div class="spin"></div><div style="font-size:22px;font-weight:800">Optimizing placement...</div><div style="color:var(--dim);font-size:14px;animation:pu 1.5s infinite">Running gap-aware multi-pass solver</div></div>';
-  }
-  else if(S.step==='result'){
-    h.innerHTML='<button class="btn btn-g btn-sm" onclick="resetApp()">↺ New</button> <button class="btn btn-p btn-sm" onclick="dlCSV()">↓ Download CSV</button>';
-    a.innerHTML=renderResult();
+
+  } else if (S.step === 'solving') {
+    ha.innerHTML = '';
+    app.innerHTML = `
+      <div class="solving-view">
+        <div class="stack-wrap">
+          <div class="s-box"></div>
+          <div class="s-box"></div>
+          <div class="s-box"></div>
+          <div class="s-box"></div>
+        </div>
+        <div class="solving-text">Computing optimal placement</div>
+        <div class="solving-sub">Running gap-aware multi-pass solver</div>
+      </div>`;
+
+  } else if (S.step === 'result') {
+    ha.innerHTML = `
+      <button class="btn btn-default" onclick="resetApp()">New analysis</button>
+      <button class="btn btn-primary" onclick="dlCSV()">Export CSV</button>`;
+    app.innerHTML = renderResult();
     bindResult();
   }
 }
 
-function renderUpload(){
-  const zs=[
-    {k:'warehouse',i:'⬡',l:'Warehouse',d:'Polygon vertices'},
-    {k:'obstacles',i:'⊘',l:'Obstacles',d:'Blocked areas'},
-    {k:'ceiling',i:'△',l:'Ceiling',d:'Height profile'},
-    {k:'bays',i:'▦',l:'Bay Types',d:'Available racks'}
-  ];
+/* ─── Upload ────────────────────────────────────────────────── */
+const FILES = [
+  { k: 'warehouse', name: 'Warehouse',  desc: 'Polygon boundary vertices' },
+  { k: 'obstacles', name: 'Obstacles',  desc: 'Blocked area coordinates'  },
+  { k: 'ceiling',   name: 'Ceiling',    desc: 'Height profile sections'   },
+  { k: 'bays',      name: 'Bay Types',  desc: 'Available rack configurations' }
+];
 
-  const ok = Object.values(S.files).every(v => v !== null);
+function renderUpload() {
+  const ready = Object.values(S.files).every(v => v !== null);
+  const loaded = FILES.map(f => S.files[f.k] !== null);
+  return `
+    <div class="upload-view">
+      <div class="upload-eyebrow">HackUPC 2026 — Mecalux Challenge</div>
+      <div class="upload-title">Warehouse Optimizer</div>
+      <div class="upload-desc">Upload the four configuration files to compute optimal bay placement.</div>
 
-  return `<div class="up-pg ai">
-    <div class="up-t">Drop your warehouse files</div>
-    <div class="up-s">Upload the 4 CSV files to optimize bay placement</div>
-
-    <div class="up-gr">
-      ${zs.map(z=>{
-        const loaded = S.files[z.k] !== null;
-        return `<div class="dz ${loaded?'ok':''}" id="z-${z.k}" ondragover="event.preventDefault()" ondrop="hDrop(event,'${z.k}')">
-          <input type="file" accept=".csv,.txt" id="f-${z.k}" style="display:none" onchange="hFile('${z.k}',this)">
-          <div class="ic">${loaded?'✓':z.i}</div>
-          <div class="lb" style="color:${loaded?'var(--ok)':'var(--txt)'}">${z.l}</div>
-          <div class="ds">${loaded?'Loaded ✓':z.d}</div>
-        </div>`;
-      }).join('')}
-    </div>
-
-    <div class="up-ac">
-      <button class="btn btn-p" ${ok?'':'disabled'} onclick="go()">⚡ Optimize Warehouse</button>
-      <button class="btn btn-g btn-sm" onclick="ldEx()">Load Example Data</button>
-    </div>
-  </div>`;
-}
-
-function bindUpload(){
-  ['warehouse','obstacles','ceiling','bays'].forEach(k=>{
-    const z=document.getElementById('z-'+k);
-    if(z)z.addEventListener('click',()=>document.getElementById('f-'+k).click());
-  });
-}
-
-window.hDrop=(e,k)=>{
-  e.preventDefault();
-  const f=e.dataTransfer.files[0];
-  if(f)f.text().then(t=>{S.files[k]=t;render();});
-};
-
-window.hFile=(k,inp)=>{
-  const f=inp.files[0];
-  if(f)f.text().then(t=>{S.files[k]=t;render();});
-};
-
-window.ldEx=()=>{
-  S.files={...EX};
-  render();
-};
-
-window.go=async()=>{
-  S.step='solving';
-  render();
-
-  try{
-    const fd=new FormData();
-
-    const warehouseText = (S.files.warehouse || '').trim();
-    const obstaclesText = (S.files.obstacles || '').trim();
-    const ceilingText = (S.files.ceiling || '').trim();
-    const baysText = (S.files.bays || '').trim();
-
-    fd.append('warehouse', warehouseText);
-    fd.append('obstacles', obstaclesText === '' ? ' ' : obstaclesText);
-    fd.append('ceiling', ceilingText);
-    fd.append('bays', baysText);
-
-    const r=await fetch('/api/solve-text',{method:'POST',body:fd});
-    const d=await r.json();
-
-    if(d.success){
-      S.result=d;
-      S.step='result';
-    }else{
-      alert('Error: ' + (d.error || JSON.stringify(d.detail) || 'Unknown error'));
-      S.step='upload';
-    }
-  }catch(e){
-    alert('Error: '+e.message);
-    S.step='upload';
-  }
-
-  render();
-};
-
-function renderResult(){
-  const r=S.result;
-  const s=r.stats;
-
-  return `<div class="rp ai">
-    <div class="sb">
-      <div class="sc"><div class="sv">${s.totalBays}</div><div class="sl">Bays Placed</div></div>
-      <div class="sc"><div class="sv">${s.totalLoads}</div><div class="sl">Total Loads</div></div>
-      <div class="sc"><div class="sv">${s.areaUsage.toFixed(1)}%</div><div class="sl">Area Usage</div></div>
-      <div class="sc"><div class="sv">${s.score.toFixed(2)}</div><div class="sl">Q Score</div></div>
-      <div class="sc"><div class="sv">${s.solveTime}s</div><div class="sl">Solve Time</div></div>
-    </div>
-
-    <div class="ma">
-      <div class="vc"><div class="vf" id="vz"></div></div>
-
-      <div class="sp">
-        <div class="sh">View Mode</div>
-        <div class="view-tabs">
-          <button class="view-tab ${S.viewMode==='2d'?'active':''}" onclick="setViewMode('2d')">2D Map</button>
-          <button class="view-tab ${S.viewMode==='3d'?'active':''}" onclick="setViewMode('3d')">3D Rack</button>
+      <div class="rack-vis">
+        <div class="rack-frame">
+          ${FILES.map((f, i) => {
+            const side = i % 2 === 0 ? 'from-left' : 'from-right';
+            const on = loaded[i] ? 'in' : '';
+            return `<div class="rack-shelf"><div class="rack-pallet ${side} ${on}"></div></div>`;
+          }).join('')}
         </div>
-
-        <div class="sh">Controls</div>
-        <label class="tgl"><input type="checkbox" ${S.showGaps?'checked':''} onchange="S.showGaps=this.checked;bindResult()"> Show gap zones</label>
-        <label class="tgl"><input type="checkbox" ${S.showCeiling?'checked':''} onchange="S.showCeiling=this.checked;bindResult()"> Show ceiling zones</label>
-
-        <div class="camera-buttons" style="display:${S.viewMode==='3d'?'grid':'none'}">
-          <button class="mini-btn" onclick="set3DCamera('iso')">Iso View</button>
-          <button class="mini-btn" onclick="set3DCamera('top')">Top View</button>
-        </div>
-
-        <div class="sh" style="margin-top:18px">Bay Types Legend</div>
-        ${r.bayTypes.map(bt=>{
-          const c=r.placed.filter(p=>p.id===bt.id).length;
-          const ci=bt.id%BC.length;
-          return `<div class="li">
-            <div class="tp">
-              <span class="ld" style="background:${BB[ci]}; color:${BB[ci]}"></span>
-              <span style="font-weight:800;font-size:14px">Type ${bt.id}</span>
-              <span style="margin-left:auto;font-family:'JetBrains Mono';font-size:13px;color:${BB[ci]}">×${c}</span>
-            </div>
-            <div class="mt">${bt.w}×${bt.d}×${bt.h} | gap:${bt.gap} | ${bt.nLoads}L | $${bt.price}</div>
-          </div>`;
-        }).join('')}
-
-        <div class="sh" style="margin-top:22px">Output CSV</div>
-        <div class="co">${r.csv}</div>
+        <div class="rack-base"></div>
       </div>
-    </div>
-  </div>`;
+
+      <div class="upload-grid">
+        ${FILES.map(f => {
+          const ok = S.files[f.k] !== null;
+          return `
+            <div class="dropzone ${ok ? 'loaded' : ''}" id="z-${f.k}"
+              ondragover="event.preventDefault()"
+              ondrop="hDrop(event,'${f.k}')">
+              <input type="file" accept=".csv,.txt" id="f-${f.k}"
+                style="display:none" onchange="hFile('${f.k}',this)">
+              <div class="dz-top">
+                <span class="dz-name">${f.name}</span>
+                ${ok ? '<span class="dz-badge">Ready</span>' : ''}
+              </div>
+              <div class="dz-desc">${f.desc}</div>
+              ${!ok ? '<div class="dz-cta">Click or drop to upload</div>' : ''}
+            </div>`;
+        }).join('')}
+      </div>
+
+      <div class="upload-footer">
+        <button class="btn btn-primary" ${ready ? '' : 'disabled'} onclick="go()">
+          Run optimization
+        </button>
+        <button class="btn btn-ghost" onclick="ldEx()">Load example data</button>
+      </div>
+    </div>`;
 }
 
-function bindResult(){
-  if(!S.result)return;
+function bindUpload() {
+  FILES.forEach(f => {
+    const z = document.getElementById('z-' + f.k);
+    if (z) z.addEventListener('click', () => document.getElementById('f-' + f.k).click());
+  });
+}
 
-  if(S.viewMode === '3d'){
-    render3D(S.result);
-  }else{
-    destroy3D();
-    bindResult2D();
+window.hDrop = (e, k) => {
+  e.preventDefault();
+  const f = e.dataTransfer.files[0];
+  if (f) f.text().then(t => { S.files[k] = t; render(); });
+};
+
+window.hFile = (k, inp) => {
+  const f = inp.files[0];
+  if (f) f.text().then(t => { S.files[k] = t; render(); });
+};
+
+window.ldEx = () => {
+  const order = ['warehouse','obstacles','ceiling','bays'];
+  S.files = { warehouse:null, obstacles:null, ceiling:null, bays:null };
+  render();
+  order.forEach((k, i) => {
+    setTimeout(() => { S.files[k] = EX[k]; render(); }, 350 * (i + 1));
+  });
+};
+
+/* ─── Solve ─────────────────────────────────────────────────── */
+window.go = async () => {
+  S.step = 'solving'; render();
+  try {
+    const fd = new FormData();
+    fd.append('warehouse', (S.files.warehouse || '').trim());
+    const obs = (S.files.obstacles || '').trim();
+    fd.append('obstacles', obs === '' ? ' ' : obs);
+    fd.append('ceiling', (S.files.ceiling || '').trim());
+    fd.append('bays', (S.files.bays || '').trim());
+
+    const res = await fetch('/api/solve-text', { method: 'POST', body: fd });
+    const d   = await res.json();
+
+    if (d.success) { S.result = d; S.step = 'result'; }
+    else { alert('Error: ' + (d.error || JSON.stringify(d.detail) || 'Unknown')); S.step = 'upload'; }
+  } catch(e) {
+    alert('Error: ' + e.message); S.step = 'upload';
   }
+  render();
+};
+
+/* ─── Result ─────────────────────────────────────────────────── */
+function renderResult() {
+  const r = S.result, s = r.stats;
+  return `
+    <div class="result-view">
+
+      <div class="metrics-bar">
+        <div class="metric">
+          <div class="metric-val">${s.totalBays}</div>
+          <div class="metric-key">Bays placed</div>
+        </div>
+        <div class="metric">
+          <div class="metric-val">${s.totalLoads}</div>
+          <div class="metric-key">Total loads</div>
+        </div>
+        <div class="metric">
+          <div class="metric-val">${s.areaUsage.toFixed(1)}%</div>
+          <div class="metric-key">Area usage</div>
+        </div>
+        <div class="metric">
+          <div class="metric-val">${s.score.toFixed(2)}</div>
+          <div class="metric-key">Quality score</div>
+        </div>
+        <div class="metric">
+          <div class="metric-val">${s.solveTime}s</div>
+          <div class="metric-key">Solve time</div>
+        </div>
+      </div>
+
+      <div class="result-body">
+        <div class="viz-pane">
+          <div class="viz-toolbar">
+            <div class="view-seg">
+              <button class="vsb ${S.viewMode==='2d'?'active':''}" onclick="setViewMode('2d')">2D Plan</button>
+              <button class="vsb ${S.viewMode==='3d'?'active':''}" onclick="setViewMode('3d')">3D View</button>
+            </div>
+            <div class="viz-sp"></div>
+          </div>
+          <div class="viz-frame" id="vz"></div>
+        </div>
+
+        <div class="sidebar">
+
+          <div class="sb-block">
+            <div class="sb-head">Display</div>
+            <div class="tgl-row">
+              <span class="tgl-label">Gap zones</span>
+              <label class="tgl">
+                <input type="checkbox" ${S.showGaps ? 'checked' : ''}
+                  onchange="S.showGaps=this.checked;bindResult()">
+                <span class="tgl-track"></span>
+              </label>
+            </div>
+            <div class="tgl-row">
+              <span class="tgl-label">Ceiling zones</span>
+              <label class="tgl">
+                <input type="checkbox" ${S.showCeiling ? 'checked' : ''}
+                  onchange="S.showCeiling=this.checked;bindResult()">
+                <span class="tgl-track"></span>
+              </label>
+            </div>
+            ${S.viewMode === '3d' ? `
+            <div class="cam-row">
+              <button class="cam-btn" onclick="set3DCamera('iso')">Isometric</button>
+              <button class="cam-btn" onclick="set3DCamera('top')">Top</button>
+            </div>` : ''}
+          </div>
+
+          <div class="sb-block">
+            <div class="sb-head">Bay types</div>
+            <table class="bay-tbl">
+              ${r.bayTypes.map(bt => {
+                const count = r.placed.filter(p => p.id === bt.id).length;
+                const sw    = SWATCH[bt.id % SWATCH.length];
+                return `<tr>
+                  <td>
+                    <span class="bay-dot" style="background:${sw}"></span>
+                    <span class="bay-id">Type ${bt.id}</span>
+                    <div class="bay-spec">${bt.w} x ${bt.d} x ${bt.h} mm &nbsp;·&nbsp; gap ${bt.gap} &nbsp;·&nbsp; ${bt.nLoads} loads &nbsp;·&nbsp; €${bt.price}</div>
+                  </td>
+                  <td class="bay-ct">${count}</td>
+                </tr>`;
+              }).join('')}
+            </table>
+          </div>
+
+          
+
+        </div>
+      </div>
+    </div>`;
 }
 
-function bindResult2D(){
-  const f=document.getElementById('vz');
-  if(!f||!S.result)return;
+/* ─── Result binding ─────────────────────────────────────────── */
+function bindResult() {
+  if (!S.result) return;
+  if (S.viewMode === '3d') { render3D(S.result); }
+  else { destroy3D(); bindResult2D(); }
+}
 
-  const r=S.result;
-  const wh=r.warehouse;
+/* ─── 2D Visualisation ───────────────────────────────────────── */
+function bindResult2D() {
+  const f = document.getElementById('vz');
+  if (!f || !S.result) return;
 
-  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
-  wh.forEach(v=>{
-    x0=Math.min(x0,v.x);
-    y0=Math.min(y0,v.y);
-    x1=Math.max(x1,v.x);
-    y1=Math.max(y1,v.y);
+  const r = S.result, wh = r.warehouse;
+  let x0=Infinity, y0=Infinity, x1=-Infinity, y1=-Infinity;
+  wh.forEach(v => {
+    x0=Math.min(x0,v.x); y0=Math.min(y0,v.y);
+    x1=Math.max(x1,v.x); y1=Math.max(y1,v.y);
   });
 
-  const ww=x1-x0;
-  const hh=y1-y0;
-  const pad=Math.max(ww,hh)*0.05;
+  const ww=x1-x0, hh=y1-y0, pad=Math.max(ww,hh)*0.05;
   const pts=wh.map(v=>`${v.x},${v.y}`).join(' ');
   const sw=Math.max(8,ww/200);
 
-  let svg=`<svg viewBox="${x0-pad} ${y0-pad} ${ww+pad*2} ${hh+pad*2}" style="width:100%;height:100%;background:#080c14" xmlns="http://www.w3.org/2000/svg">`;
+  let svg=`<svg viewBox="${x0-pad} ${y0-pad} ${ww+pad*2} ${hh+pad*2}"
+    style="width:100%;height:100%;display:block;background:transparent"
+    xmlns="http://www.w3.org/2000/svg">`;
 
-  svg+=`
-    <defs>
-      <pattern id="gridPattern" width="${Math.max(100,ww/60)}" height="${Math.max(100,hh/60)}" patternUnits="userSpaceOnUse">
-        <path d="M ${Math.max(100,ww/60)} 0 L 0 0 0 ${Math.max(100,hh/60)}" fill="none" stroke="rgba(255,255,255,0.035)" stroke-width="${Math.max(1,ww/1400)}"/>
-      </pattern>
+  svg+=`<defs>
+    <pattern id="grid" width="${Math.max(100,ww/60)}" height="${Math.max(100,hh/60)}" patternUnits="userSpaceOnUse">
+      <path d="M ${Math.max(100,ww/60)} 0 L 0 0 0 ${Math.max(100,hh/60)}"
+        fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="${Math.max(1,ww/1400)}"/>
+    </pattern>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="${ww*0.002}" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="rshadow">
+      <feDropShadow dx="${ww/1000}" dy="${ww/1000}" stdDeviation="${ww/1000}"
+        flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+    <clipPath id="wc"><polygon points="${pts}"/></clipPath>
+  </defs>`;
 
-      <filter id="warehouseGlow">
-        <feGaussianBlur stdDeviation="${ww*0.003}" result="blur"/>
-        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-      </filter>
+  svg+=`<rect x="${x0-pad}" y="${y0-pad}" width="${ww+pad*2}" height="${hh+pad*2}" fill="url(#grid)"/>`;
+  svg+=`<polygon points="${pts}" fill="rgba(255,255,255,0.35)" stroke="rgba(80,90,110,0.35)" stroke-width="${sw}" filter="url(#glow)"/>`;
 
-      <filter id="rackShadow">
-        <feDropShadow dx="${ww/900}" dy="${ww/900}" stdDeviation="${ww/900}" flood-color="#000000" flood-opacity="0.55"/>
-      </filter>
-
-      <clipPath id="warehouseClip">
-        <polygon points="${pts}" />
-      </clipPath>
-    </defs>
-  `;
-
-  svg+=`<rect x="${x0-pad}" y="${y0-pad}" width="${ww+pad*2}" height="${hh+pad*2}" fill="url(#gridPattern)"/>`;
-
-  svg+=`
-    <polygon points="${pts}"
-      fill="rgba(17,27,44,0.92)"
-      stroke="#4c78ff"
-      stroke-width="${sw}"
-      filter="url(#warehouseGlow)"/>
-  `;
-
-  svg+=`
-    <polygon points="${pts}"
-      fill="none"
-      stroke="rgba(255,255,255,0.28)"
-      stroke-width="${Math.max(1,ww/900)}"
-      stroke-dasharray="${ww/180} ${ww/260}"
-      opacity="0.75"/>
-  `;
-
-  svg+=`
-    <polygon points="${pts}"
-      fill="rgba(255,255,255,0.025)"
-      stroke="none"/>
-  `;
-
-  function polyPts(coords){
-    return coords.map(c=>c[0]+','+c[1]).join(' ');
-  }
-
-  function centroid(coords){
-    let cx=0,cy=0;
-    for(const c of coords){
-      cx+=c[0];
-      cy+=c[1];
-    }
-    return [cx/coords.length, cy/coords.length];
-  }
-
-  function bbox(coords){
+  /* helpers */
+  const polyPts = c => c.map(p=>p[0]+','+p[1]).join(' ');
+  const centroid = c => {
+    let cx=0,cy=0; c.forEach(p=>{cx+=p[0];cy+=p[1];});
+    return [cx/c.length,cy/c.length];
+  };
+  const bbox = c => {
     let bx0=Infinity,by0=Infinity,bx1=-Infinity,by1=-Infinity;
-    for(const c of coords){
-      bx0=Math.min(bx0,c[0]);
-      by0=Math.min(by0,c[1]);
-      bx1=Math.max(bx1,c[0]);
-      by1=Math.max(by1,c[1]);
-    }
+    c.forEach(p=>{bx0=Math.min(bx0,p[0]);by0=Math.min(by0,p[1]);bx1=Math.max(bx1,p[0]);by1=Math.max(by1,p[1]);});
     return {x0:bx0,y0:by0,x1:bx1,y1:by1,w:bx1-bx0,h:by1-by0};
+  };
+  const hexAlpha = (hex,a) => {
+    const rv=parseInt(hex.slice(1,3),16);
+    const gv=parseInt(hex.slice(3,5),16);
+    const bv=parseInt(hex.slice(5,7),16);
+    return `rgba(${rv},${gv},${bv},${a})`;
+  };
+
+  /* ceiling base */
+  if (S.showCeiling && r.ceiling && r.ceiling.length) {
+    const cl=[...r.ceiling].sort((a,b)=>a.x-b.x);
+    cl.forEach((c,i)=>{
+      const sx=Math.max(c.x,x0);
+      const ex=i<cl.length-1?Math.min(cl[i+1].x,x1):x1;
+      const w=ex-sx; if(w<=0)return;
+      svg+=`<rect x="${sx}" y="${y0}" width="${w}" height="${hh}"
+        fill="rgba(255,255,255,0.022)" stroke="rgba(255,255,255,0.06)"
+        stroke-width="${Math.max(1,ww/900)}" clip-path="url(#wc)"/>`;
+      svg+=`<line x1="${sx}" y1="${y0}" x2="${sx}" y2="${y1}"
+        stroke="rgba(255,255,255,0.08)" stroke-width="${Math.max(1,ww/700)}"
+        stroke-dasharray="${ww/250} ${ww/300}" clip-path="url(#wc)"/>`;
+      const lx=sx+w/2,ly=y0+hh*0.055;
+      svg+=`<text x="${lx}" y="${ly}" text-anchor="middle" dominant-baseline="central"
+        fill="rgba(255,255,255,0.28)" font-weight="500"
+        font-size="${Math.max(75,ww/110)}"
+        style="pointer-events:none">${c.h} mm</text>`;
+    });
+    svg+=`<line x1="${x1}" y1="${y0}" x2="${x1}" y2="${y1}"
+      stroke="rgba(255,255,255,0.08)" stroke-width="${Math.max(1,ww/700)}"
+      stroke-dasharray="${ww/250} ${ww/300}" clip-path="url(#wc)"/>`;
   }
 
-  function drawCeilingBaseLayer(){
-    if(!S.showCeiling || !r.ceiling || r.ceiling.length===0)return '';
-
-    const ceiling=[...r.ceiling].sort((a,b)=>a.x-b.x);
-    const ceilingColors=[
-      'rgba(42,111,255,0.15)',
-      'rgba(46,213,115,0.15)',
-      'rgba(255,215,0,0.15)',
-      'rgba(255,107,53,0.15)',
-      'rgba(165,94,234,0.15)'
-    ];
-
-    let out='';
-
-    for(let i=0;i<ceiling.length;i++){
-      const startX=Math.max(ceiling[i].x,x0);
-      const endX=i<ceiling.length-1?Math.min(ceiling[i+1].x,x1):x1;
-      const width=endX-startX;
-      if(width<=0)continue;
-
-      const hVal=ceiling[i].h;
-      const color=ceilingColors[i%ceilingColors.length];
-
-      out+=`
-        <rect x="${startX}" y="${y0}" width="${width}" height="${hh}"
-          fill="${color}"
-          stroke="rgba(255,255,255,0.10)"
-          stroke-width="${Math.max(1,ww/900)}"
-          clip-path="url(#warehouseClip)"
-        />
-      `;
-
-      out+=`
-        <line x1="${startX}" y1="${y0}" x2="${startX}" y2="${y1}"
-          stroke="rgba(255,255,255,0.20)"
-          stroke-width="${Math.max(1,ww/700)}"
-          stroke-dasharray="${ww/250} ${ww/300}"
-          clip-path="url(#warehouseClip)"
-        />
-      `;
-
-      const labelX=startX+width/2;
-      const labelY=y0+hh*0.055;
-
-      out+=`
-        <text x="${labelX}" y="${labelY}"
-          text-anchor="middle"
-          dominant-baseline="central"
-          fill="rgba(255,255,255,0.78)"
-          font-weight="900"
-          font-size="${Math.max(75,ww/110)}"
-          style="pointer-events:none;text-shadow:0 2px 5px rgba(0,0,0,0.9);"
-        >${hVal} mm</text>
-      `;
-    }
-
-    out+=`
-      <line x1="${x1}" y1="${y0}" x2="${x1}" y2="${y1}"
-        stroke="rgba(255,255,255,0.16)"
-        stroke-width="${Math.max(1,ww/700)}"
-        stroke-dasharray="${ww/250} ${ww/300}"
-        clip-path="url(#warehouseClip)"
-      />
-    `;
-
-    return out;
-  }
-
-  function drawCeilingGlassLayer(){
-    if(!S.showCeiling || !r.ceiling || r.ceiling.length===0)return '';
-
-    const ceiling=[...r.ceiling].sort((a,b)=>a.x-b.x);
-    let out='';
-
-    for(let i=0;i<ceiling.length;i++){
-      const startX=Math.max(ceiling[i].x,x0);
-      const endX=i<ceiling.length-1?Math.min(ceiling[i+1].x,x1):x1;
-      const width=endX-startX;
-      if(width<=0)continue;
-
-      out+=`
-        <rect x="${startX}" y="${y0}" width="${width}" height="${hh}"
-          fill="rgba(255,255,255,0.035)"
-          stroke="rgba(255,255,255,0.13)"
-          stroke-width="${Math.max(1,ww/1200)}"
-          clip-path="url(#warehouseClip)"
-        />
-      `;
-    }
-
-    return out;
-  }
-
-  function drawRack2D(b, coords, ci, idx){
-    const bb=bbox(coords);
-    const clipId=`clip-rack-${idx}`;
-    const patternId=`pattern-rack-${idx}`;
-
-    const strokeW=Math.max(2,ww/650);
-    const innerW=Math.max(1,ww/1600);
-
-    const x=bb.x0;
-    const y=bb.y0;
-    const w=bb.w;
-    const h=bb.h;
-    const ctr=centroid(coords);
-
-    let out='';
-    const isHorizontal=w>=h;
-    const spacing=Math.max(70,Math.min(w,h)/5);
-
-    out+=`
-      <defs>
-        <clipPath id="${clipId}">
-          <polygon points="${polyPts(coords)}"/>
-        </clipPath>
-
-        <pattern id="${patternId}" patternUnits="userSpaceOnUse" width="${spacing}" height="${spacing}">
-          <path d="M 0 0 L ${spacing} 0" stroke="rgba(255,255,255,0.42)" stroke-width="${innerW}"/>
-          <path d="M 0 ${spacing/2} L ${spacing} ${spacing/2}" stroke="rgba(255,255,255,0.22)" stroke-width="${innerW}"/>
-        </pattern>
-      </defs>
-    `;
-
-    out+=`
-      <polygon points="${polyPts(coords)}"
-        fill="rgba(0,0,0,0.28)"
-        stroke="rgba(0,0,0,0.15)"
-        stroke-width="${strokeW*2}"
-        transform="translate(${strokeW*0.9},${strokeW*0.9})"
-        opacity="0.65"/>
-    `;
-
-    out+=`
-      <polygon points="${polyPts(coords)}"
-        fill="${BC[ci].replace('0.55','0.36')}"
-        stroke="${BB[ci]}"
-        stroke-width="${strokeW}"
-        filter="url(#rackShadow)"
-        style="cursor:pointer">
-        <title>Bay #${b.id} | ${b.w}×${b.d}×${b.h} | rot=${b.rotation}° | ${b.nLoads} loads | $${b.price}</title>
-      </polygon>
-    `;
-
-    out+=`
-      <polygon points="${polyPts(coords)}"
-        fill="url(#${patternId})"
-        opacity="0.34"
-        clip-path="url(#${clipId})"/>
-    `;
-
-    if(isHorizontal){
-      const rows=Math.max(4,Math.floor(h/Math.max(110,h/8)));
-      for(let k=1;k<rows;k++){
-        const yy=y+(h*k/rows);
-        out+=`<line x1="${x}" y1="${yy}" x2="${x+w}" y2="${yy}"
-          stroke="rgba(220,240,255,0.58)" stroke-width="${innerW}"
-          clip-path="url(#${clipId})"/>`;
-      }
-
-      const cols=Math.max(5,Math.floor(w/Math.max(130,w/12)));
-      for(let k=1;k<cols;k++){
-        const xx=x+(w*k/cols);
-        out+=`<line x1="${xx}" y1="${y}" x2="${xx}" y2="${y+h}"
-          stroke="rgba(220,240,255,0.26)" stroke-width="${innerW}"
-          clip-path="url(#${clipId})"/>`;
-      }
-    }else{
-      const cols=Math.max(4,Math.floor(w/Math.max(110,w/8)));
-      for(let k=1;k<cols;k++){
-        const xx=x+(w*k/cols);
-        out+=`<line x1="${xx}" y1="${y}" x2="${xx}" y2="${y+h}"
-          stroke="rgba(220,240,255,0.58)" stroke-width="${innerW}"
-          clip-path="url(#${clipId})"/>`;
-      }
-
-      const rows=Math.max(5,Math.floor(h/Math.max(130,h/12)));
-      for(let k=1;k<rows;k++){
-        const yy=y+(h*k/rows);
-        out+=`<line x1="${x}" y1="${yy}" x2="${x+w}" y2="${yy}"
-          stroke="rgba(220,240,255,0.26)" stroke-width="${innerW}"
-          clip-path="url(#${clipId})"/>`;
-      }
-    }
-
-    const support=Math.max(35,Math.min(w,h)*0.08);
-
-    if(isHorizontal){
-      out+=`<rect x="${x}" y="${y}" width="${support}" height="${h}" fill="rgba(15,23,42,0.62)" clip-path="url(#${clipId})"/>`;
-      out+=`<rect x="${x+w-support}" y="${y}" width="${support}" height="${h}" fill="rgba(15,23,42,0.62)" clip-path="url(#${clipId})"/>`;
-    }else{
-      out+=`<rect x="${x}" y="${y}" width="${w}" height="${support}" fill="rgba(15,23,42,0.62)" clip-path="url(#${clipId})"/>`;
-      out+=`<rect x="${x}" y="${y+h-support}" width="${w}" height="${support}" fill="rgba(15,23,42,0.62)" clip-path="url(#${clipId})"/>`;
-    }
-
-    out+=`
-      <text x="${ctr[0]}" y="${ctr[1]}"
-        text-anchor="middle"
-        dominant-baseline="central"
-        fill="white"
-        font-weight="900"
-        font-size="${Math.max(70,Math.min(w,h)*0.26)}"
-        style="pointer-events:none;text-shadow:0 2px 6px rgba(0,0,0,0.95)"
-      >${b.id}</text>
-    `;
-
-    if(Math.min(w,h)>ww*0.035){
-      out+=`
-        <text x="${ctr[0]}" y="${ctr[1]+Math.max(70,Math.min(w,h)*0.26)}"
-          text-anchor="middle"
-          dominant-baseline="central"
-          fill="rgba(255,255,255,0.72)"
-          font-weight="800"
-          font-size="${Math.max(35,Math.min(w,h)*0.105)}"
-          style="pointer-events:none;text-shadow:0 2px 5px rgba(0,0,0,0.9)"
-        >${Math.round(b.h)} mm</text>
-      `;
-    }
-
-    return out;
-  }
-
-  svg+=drawCeilingBaseLayer();
-
+  /* obstacles */
   r.obstacles.forEach((o,i)=>{
-    svg+=`
-      <defs>
-        <pattern id="obsPattern-${i}" width="${ww/120}" height="${ww/120}" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="0" y2="${ww/120}" stroke="rgba(255,100,100,0.28)" stroke-width="${Math.max(2,ww/900)}"/>
-        </pattern>
-      </defs>
-
-      <rect x="${o.x}" y="${o.y}" width="${o.w}" height="${o.d}"
-        fill="rgba(255,50,50,0.20)"
-        stroke="#ff4d4d"
-        stroke-width="${Math.max(3,ww/500)}"
-        stroke-dasharray="${ww/100} ${ww/200}"/>
-
-      <rect x="${o.x}" y="${o.y}" width="${o.w}" height="${o.d}"
-        fill="url(#obsPattern-${i})"
-        opacity="0.75"/>
-
-      <line x1="${o.x}" y1="${o.y}" x2="${o.x+o.w}" y2="${o.y+o.d}" stroke="rgba(255,80,80,0.22)" stroke-width="${Math.max(2,ww/600)}"/>
-      <line x1="${o.x+o.w}" y1="${o.y}" x2="${o.x}" y2="${o.y+o.d}" stroke="rgba(255,80,80,0.22)" stroke-width="${Math.max(2,ww/600)}"/>
-    `;
+    svg+=`<defs>
+      <pattern id="op${i}" width="${ww/120}" height="${ww/120}"
+        patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <line x1="0" y1="0" x2="0" y2="${ww/120}"
+          stroke="rgba(220,38,38,0.35)" stroke-width="${Math.max(2,ww/900)}"/>
+      </pattern>
+    </defs>
+    <rect x="${o.x}" y="${o.y}" width="${o.w}" height="${o.d}"
+      fill="rgba(220,38,38,0.1)" stroke="rgba(220,38,38,0.55)"
+      stroke-width="${Math.max(3,ww/500)}" stroke-dasharray="${ww/100} ${ww/200}"/>
+    <rect x="${o.x}" y="${o.y}" width="${o.w}" height="${o.d}"
+      fill="url(#op${i})" opacity="0.65"/>`;
   });
 
-  if(S.showGaps){
-    r.placed.forEach((b)=>{
+  /* gap zones */
+  if (S.showGaps) {
+    r.placed.forEach(b=>{
       if(b.gapCoords&&b.gapCoords.length>2){
-        svg+=`
-          <polygon points="${polyPts(b.gapCoords)}"
-            fill="rgba(160,210,255,0.075)"
-            stroke="rgba(180,230,255,0.24)"
-            stroke-width="${Math.max(1,ww/700)}"
-            stroke-dasharray="${ww/260} ${ww/320}"/>
-        `;
+        svg+=`<polygon points="${polyPts(b.gapCoords)}"
+          fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.07)"
+          stroke-width="${Math.max(1,ww/700)}"
+          stroke-dasharray="${ww/260} ${ww/320}"/>`;
       }
     });
   }
 
+  /* racks */
   r.placed.forEach((b,i)=>{
-    const ci=b.id%BC.length;
+    if(!b.footprintCoords||b.footprintCoords.length<3)return;
     const coords=b.footprintCoords;
-    if(!coords||coords.length<3)return;
-    svg+=drawRack2D(b,coords,ci,i);
+    const ci=b.id%SWATCH.length;
+    const bb2=bbox(coords);
+    const cId=`c${i}`, pId=`p${i}`;
+    const strokeW=Math.max(2,ww/650);
+    const innerW=Math.max(1,ww/1600);
+    const {x,y,w,h}={x:bb2.x0,y:bb2.y0,w:bb2.w,h:bb2.h};
+    const ctr=centroid(coords);
+    const isH=w>=h;
+    const spc=Math.max(70,Math.min(w,h)/5);
+    const color=SWATCH[ci];
+
+    svg+=`<defs>
+      <clipPath id="${cId}"><polygon points="${polyPts(coords)}"/></clipPath>
+      <pattern id="${pId}" patternUnits="userSpaceOnUse" width="${spc}" height="${spc}">
+        <path d="M 0 0 L ${spc} 0" stroke="rgba(255,255,255,0.22)" stroke-width="${innerW}"/>
+        <path d="M 0 ${spc/2} L ${spc} ${spc/2}" stroke="rgba(255,255,255,0.1)" stroke-width="${innerW}"/>
+      </pattern>
+    </defs>`;
+
+    svg+=`<polygon points="${polyPts(coords)}"
+      fill="${hexAlpha(color,0.42)}" stroke="${color}"
+      stroke-width="${strokeW}" filter="url(#rshadow)" style="cursor:pointer">
+      <title>Type ${b.id}
+      Size: ${b.w} x ${b.d} x ${b.h} mm
+      Rotation: ${b.rotation}°
+      Loads: ${b.nLoads}
+      Gap: ${b.gap} mm
+      Price: €${b.price}
+      Position: x=${b.x}, y=${b.y}</title>
+    </polygon>`;
+
+    svg+=`<polygon points="${polyPts(coords)}"
+      fill="url(#${pId})" opacity="0.22" clip-path="url(#${cId})"/>`;
+
+    /* shelf lines */
+    if(isH){
+      const rows=Math.max(4,Math.floor(h/Math.max(110,h/8)));
+      for(let k=1;k<rows;k++){
+        const yy=y+h*k/rows;
+        svg+=`<line x1="${x}" y1="${yy}" x2="${x+w}" y2="${yy}"
+          stroke="rgba(255,255,255,0.28)" stroke-width="${innerW}" clip-path="url(#${cId})"/>`;
+      }
+      const cols=Math.max(5,Math.floor(w/Math.max(130,w/12)));
+      for(let k=1;k<cols;k++){
+        const xx=x+w*k/cols;
+        svg+=`<line x1="${xx}" y1="${y}" x2="${xx}" y2="${y+h}"
+          stroke="rgba(255,255,255,0.1)" stroke-width="${innerW}" clip-path="url(#${cId})"/>`;
+      }
+    } else {
+      const cols=Math.max(4,Math.floor(w/Math.max(110,w/8)));
+      for(let k=1;k<cols;k++){
+        const xx=x+w*k/cols;
+        svg+=`<line x1="${xx}" y1="${y}" x2="${xx}" y2="${y+h}"
+          stroke="rgba(255,255,255,0.28)" stroke-width="${innerW}" clip-path="url(#${cId})"/>`;
+      }
+      const rows=Math.max(5,Math.floor(h/Math.max(130,h/12)));
+      for(let k=1;k<rows;k++){
+        const yy=y+h*k/rows;
+        svg+=`<line x1="${x}" y1="${yy}" x2="${x+w}" y2="${yy}"
+          stroke="rgba(255,255,255,0.1)" stroke-width="${innerW}" clip-path="url(#${cId})"/>`;
+      }
+    }
+
+    /* uprights */
+    const sup=Math.max(35,Math.min(w,h)*0.08);
+    if(isH){
+      svg+=`<rect x="${x}" y="${y}" width="${sup}" height="${h}"
+        fill="rgba(0,0,0,0.42)" clip-path="url(#${cId})"/>`;
+      svg+=`<rect x="${x+w-sup}" y="${y}" width="${sup}" height="${h}"
+        fill="rgba(0,0,0,0.42)" clip-path="url(#${cId})"/>`;
+    } else {
+      svg+=`<rect x="${x}" y="${y}" width="${w}" height="${sup}"
+        fill="rgba(0,0,0,0.42)" clip-path="url(#${cId})"/>`;
+      svg+=`<rect x="${x}" y="${y+h-sup}" width="${w}" height="${sup}"
+        fill="rgba(0,0,0,0.42)" clip-path="url(#${cId})"/>`;
+    }
+
+    /* id label */
+    svg+=`<text x="${ctr[0]}" y="${ctr[1]}" text-anchor="middle"
+      dominant-baseline="central" fill="white" font-weight="600"
+      font-size="${Math.max(70,Math.min(w,h)*0.26)}"
+      style="pointer-events:none;font-family:'Inter',sans-serif;
+        text-shadow:0 1px 3px rgba(0,0,0,0.9)">${b.id}</text>`;
+
+    if(Math.min(w,h)>ww*0.035){
+      svg+=`<text x="${ctr[0]}" y="${ctr[1]+Math.max(70,Math.min(w,h)*0.26)}"
+        text-anchor="middle" dominant-baseline="central"
+        fill="rgba(255,255,255,0.5)" font-weight="400"
+        font-size="${Math.max(35,Math.min(w,h)*0.105)}"
+        style="pointer-events:none;font-family:'Inter',sans-serif"
+        >${Math.round(b.h)} mm</text>`;
+    }
   });
 
-  svg+=drawCeilingGlassLayer();
+  /* ceiling glass overlay */
+  if(S.showCeiling&&r.ceiling&&r.ceiling.length){
+    const cl=[...r.ceiling].sort((a,b)=>a.x-b.x);
+    cl.forEach((c,i)=>{
+      const sx=Math.max(c.x,x0);
+      const ex=i<cl.length-1?Math.min(cl[i+1].x,x1):x1;
+      const w=ex-sx; if(w<=0)return;
+      svg+=`<rect x="${sx}" y="${y0}" width="${w}" height="${hh}"
+        fill="rgba(255,255,255,0.012)" stroke="rgba(255,255,255,0.05)"
+        stroke-width="${Math.max(1,ww/1200)}" clip-path="url(#wc)"/>`;
+    });
+  }
 
   svg+='</svg>';
   f.innerHTML=svg;
 }
 
-window.resetApp=()=>{
+/* ─── Global actions ─────────────────────────────────────────── */
+window.resetApp = () => {
   destroy3D();
   S.step='upload';
   S.files={warehouse:null,obstacles:null,ceiling:null,bays:null};
@@ -1257,14 +1290,12 @@ window.resetApp=()=>{
   render();
 };
 
-window.dlCSV=()=>{
+window.dlCSV = () => {
   if(!S.result)return;
   const b=new Blob([S.result.csv],{type:'text/csv'});
   const u=URL.createObjectURL(b);
   const a=document.createElement('a');
-  a.href=u;
-  a.download='solution.csv';
-  a.click();
+  a.href=u; a.download='solution.csv'; a.click();
   URL.revokeObjectURL(u);
 };
 
@@ -1280,6 +1311,6 @@ async def index():
 
 
 if __name__ == "__main__":
-    print("\n🏭 Warehouse Optimizer — HackUPC 2026")
+    print("\nWarehouse Optimizer — HackUPC 2026")
     print("   Open http://localhost:8000\n")
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -26,10 +26,11 @@ function render3D(r) {
 
   const canvasWrap = document.createElement("div");
   canvasWrap.className = "canvas3d";
+  canvasWrap.style.background = "transparent";
   container.appendChild(canvasWrap);
 
   const bounds = getWarehouseBounds(r.warehouse);
-  const SCALE = 0.001; // mm -> metres
+  const SCALE = 0.001;
 
   const cx = (bounds.x0 + bounds.x1) / 2;
   const cy = (bounds.y0 + bounds.y1) / 2;
@@ -43,7 +44,7 @@ function render3D(r) {
   }
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x070b14);
+  scene.background = null;
   scene.fog = new THREE.Fog(0x070b14, 18, 70);
 
   const width = canvasWrap.clientWidth || container.clientWidth || 900;
@@ -51,7 +52,12 @@ function render3D(r) {
 
   const camera = new THREE.PerspectiveCamera(45, width / height, 0.05, 250);
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    alpha: true,
+  });
+
+  renderer.setClearColor(0x000000, 0);
   renderer.setSize(width, height);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.shadowMap.enabled = true;
@@ -81,6 +87,8 @@ function render3D(r) {
     roughness: 0.88,
     metalness: 0.03,
     side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.86,
   });
 
   const matLine = new THREE.LineBasicMaterial({
@@ -110,15 +118,15 @@ function render3D(r) {
 
   const grid = new THREE.GridHelper(maxDim * 1.15, 40, 0x24314a, 0x111827);
   grid.position.y = 0.003;
+  grid.material.transparent = true;
+  grid.material.opacity = 0.5;
   scene.add(grid);
 
-  // Ceiling zones: floor tint + real transparent roof planes
   if (S.showCeiling && r.ceiling && r.ceiling.length) {
     createCeilingZones(scene, r, bounds, sx, sz, SCALE);
     createCeilingRoofPlanes(scene, r, bounds, sx, sz, SCALE);
   }
 
-  // Obstacles
   r.obstacles.forEach((o) => {
     const h = 0.45;
     const geo = new THREE.BoxGeometry(o.w * SCALE, h, o.d * SCALE);
@@ -135,7 +143,6 @@ function render3D(r) {
     scene.add(mesh);
   });
 
-  // Gaps
   if (S.showGaps) {
     r.placed.forEach((b) => {
       if (b.gapCoords && b.gapCoords.length >= 4) {
@@ -157,7 +164,6 @@ function render3D(r) {
     });
   }
 
-  // Racks
   r.placed.forEach((b, i) => {
     const rack = createRackBay3D(b, sx, sz, SCALE, i);
     if (rack) scene.add(rack);
@@ -303,7 +309,6 @@ function createCeilingZones(scene, r, bounds, sx, sz, SCALE) {
     const w = endX - startX;
     if (w <= 0) return;
 
-    // Coloured floor projection of each ceiling zone
     const geo = new THREE.PlaneGeometry(w * SCALE, bounds.h * SCALE);
 
     const mat = new THREE.MeshStandardMaterial({
@@ -341,8 +346,6 @@ function createCeilingRoofPlanes(scene, r, bounds, sx, sz, SCALE) {
     if (w <= 0) return;
 
     const roofHeight = c.h * SCALE;
-
-    // Transparent roof plane at the actual ceiling height
     const roofGeo = new THREE.PlaneGeometry(w * SCALE, bounds.h * SCALE);
 
     const roofMat = new THREE.MeshStandardMaterial({
@@ -365,7 +368,6 @@ function createCeilingRoofPlanes(scene, r, bounds, sx, sz, SCALE) {
 
     scene.add(roof);
 
-    // Roof wireframe outline
     const edges = new THREE.EdgesGeometry(roofGeo);
     const edgeMat = new THREE.LineBasicMaterial({
       color: colors[i % colors.length],
@@ -378,7 +380,6 @@ function createCeilingRoofPlanes(scene, r, bounds, sx, sz, SCALE) {
     edgeLine.position.copy(roof.position);
     scene.add(edgeLine);
 
-    // Vertical separators at the beginning of each ceiling zone
     const sepMat = new THREE.LineBasicMaterial({
       color: 0xffffff,
       transparent: true,
@@ -399,7 +400,6 @@ function createCeilingRoofPlanes(scene, r, bounds, sx, sz, SCALE) {
     const sepLine = new THREE.Line(sepGeo, sepMat);
     scene.add(sepLine);
 
-    // Floating label
     const label = makeTextSprite(`${Math.round(c.h)} mm`);
     label.position.set(
       sx(startX + w / 2),
