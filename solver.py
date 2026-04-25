@@ -81,6 +81,16 @@ class PlacedBay:
 
 
 def make_bay_polygons(x, y, w, d, gap, angle_deg):
+    """
+    Creates the bay footprint and gap as rotated polygons.
+
+    The local, unrotated bay is:
+    (0,0), (w,0), (w,d), (0,d)
+
+    The gap is placed in front of the bay:
+    (0,d), (w,d), (w,d+gap), (0,d+gap)
+    """
+
     rad = math.radians(angle_deg)
     cos_a, sin_a = math.cos(rad), math.sin(rad)
 
@@ -112,33 +122,70 @@ def make_bay_polygons(x, y, w, d, gap, angle_deg):
 
 
 def get_ceiling_at(x, ceiling):
+    """
+    Step-function ceiling.
+
+    Each row (x, height) means:
+    from this x until the next x, the ceiling height is constant.
+
+    Example:
+    0, 3000
+    3000, 6000
+
+    Means:
+    x in [0, 3000)      -> 3000
+    x in [3000, end)    -> 6000
+
+    No linear interpolation.
+    """
+
     if not ceiling:
         return float("inf")
 
-    if x <= ceiling[0][0]:
-        return ceiling[0][1]
+    ceiling = sorted(ceiling, key=lambda c: c[0])
 
-    if x >= ceiling[-1][0]:
-        return ceiling[-1][1]
+    current_height = ceiling[0][1]
 
-    for i in range(len(ceiling) - 1):
-        x0, h0 = ceiling[i]
-        x1, h1 = ceiling[i + 1]
+    for cx, h in ceiling:
+        if x >= cx:
+            current_height = h
+        else:
+            break
 
-        if x0 <= x <= x1:
-            return h0 + (x - x0) / (x1 - x0) * (h1 - h0)
-
-    return ceiling[-1][1]
+    return current_height
 
 
-def min_ceiling_over_bounds(minx, maxx, ceiling, steps=10):
+def min_ceiling_over_bounds(minx, maxx, ceiling):
+    """
+    Returns the minimum ceiling height over the whole x-range of the bay.
+
+    Important:
+    If a bay spans multiple ceiling zones, the bay must fit under the lowest
+    ceiling zone that it crosses.
+    """
+
     if not ceiling:
         return float("inf")
 
-    return min(
-        get_ceiling_at(minx + (maxx - minx) * i / steps, ceiling)
-        for i in range(steps + 1)
-    )
+    if maxx < minx:
+        minx, maxx = maxx, minx
+
+    ceiling = sorted(ceiling, key=lambda c: c[0])
+
+    test_xs = [minx, maxx]
+
+    for cx, _ in ceiling:
+        if minx <= cx <= maxx:
+            test_xs.append(cx)
+
+            # Check just before and just after the breakpoint
+            if cx > minx:
+                test_xs.append(cx - 0.001)
+
+            if cx < maxx:
+                test_xs.append(cx + 0.001)
+
+    return min(get_ceiling_at(x, ceiling) for x in test_xs)
 
 
 def bounds_overlap(a, b):
@@ -151,6 +198,12 @@ def bounds_overlap(a, b):
 
 
 def real_overlap(a, b, a_b, b_b):
+    """
+    Returns True only if two geometries overlap by area.
+
+    Touching boundaries is allowed.
+    """
+
     if not bounds_overlap(a_b, b_b):
         return False
 
@@ -163,7 +216,12 @@ def real_overlap(a, b, a_b, b_b):
 class WarehouseSolver:
     def __init__(self, warehouse_vertices, obstacles, ceiling, bay_types):
         self.vertices = warehouse_vertices
+
         self.polygon = Polygon([(v[0], v[1]) for v in warehouse_vertices])
+
+        if not self.polygon.is_valid:
+            self.polygon = self.polygon.buffer(0)
+
         self.prepared = prep(self.polygon)
         self.wh_area = self.polygon.area
 
@@ -179,12 +237,12 @@ class WarehouseSolver:
         self.bay_types = [
             BayType(
                 id=int(b[0]),
-                w=b[1],
-                d=b[2],
-                h=b[3],
-                gap=b[4],
+                w=float(b[1]),
+                d=float(b[2]),
+                h=float(b[3]),
+                gap=float(b[4]),
                 n_loads=int(b[5]),
-                price=b[6],
+                price=float(b[6]),
             )
             for b in bay_types
         ]
@@ -200,7 +258,8 @@ class WarehouseSolver:
         if not self.prepared.contains(fp):
             return None
 
-        # Ceiling check
+        # Ceiling check.
+        # Uses the minimum ceiling over the full x-range of the rotated bay.
         if min_ceiling_over_bounds(fp_b[0], fp_b[2], self.ceiling) < bt.h:
             return None
 
@@ -231,38 +290,74 @@ class WarehouseSolver:
                 if real_overlap(gp, poly, gp_b, bds):
                     return None
 
-            # Gap cannot overlap bay footprints
-            # Gaps can overlap other gaps.
+            # Gap cannot overlap bay footprints.
+            # Gaps can overlap other gaps because aisles may be shared.
             for p in placed:
                 if real_overlap(gp, p.footprint, gp_b, p.fp_bounds):
                     return None
 
         return fp, gp
 
+    def _make_placed_bay(self, x, y, bt, angle, fp, gp):
+        return PlacedBay(
+            type_id=bt.id,
+            x=x,
+            y=y,
+            rotation=angle,
+            w=bt.w,
+            d=bt.d,
+            h=bt.h,
+            n_loads=bt.n_loads,
+            price=bt.price,
+            gap=bt.gap,
+            footprint=fp,
+            gap_poly=gp,
+            fp_bounds=fp.bounds,
+        )
+
     def _do_place(self, x, y, bt, angle, placed):
+        """
+        Original first-valid placement.
+        """
+
         result = self.can_place(x, y, bt, angle, placed)
 
         if result:
             fp, gp = result
+            placed.append(self._make_placed_bay(x, y, bt, angle, fp, gp))
+            return True
 
-            placed.append(
-                PlacedBay(
-                    type_id=bt.id,
-                    x=x,
-                    y=y,
-                    rotation=angle,
-                    w=bt.w,
-                    d=bt.d,
-                    h=bt.h,
-                    n_loads=bt.n_loads,
-                    price=bt.price,
-                    gap=bt.gap,
-                    footprint=fp,
-                    gap_poly=gp,
-                    fp_bounds=fp.bounds,
-                )
-            )
+        return False
 
+    def _do_place_best_q(self, x, y, candidates, placed):
+        """
+        Better greedy step:
+        At a given position, test all valid candidates and place the one
+        that produces the lowest official Q after adding it.
+
+        It compares candidates against each other, not against placing nothing.
+        """
+
+        best_bay = None
+        best_q = float("inf")
+
+        for bt, angle in candidates:
+            result = self.can_place(x, y, bt, angle, placed)
+
+            if not result:
+                continue
+
+            fp, gp = result
+            candidate_bay = self._make_placed_bay(x, y, bt, angle, fp, gp)
+
+            q = self.compute_score(placed + [candidate_bay])["score"]
+
+            if q < best_q:
+                best_q = q
+                best_bay = candidate_bay
+
+        if best_bay is not None:
+            placed.append(best_bay)
             return True
 
         return False
@@ -275,6 +370,7 @@ class WarehouseSolver:
 
         Lower Q is better.
         """
+
         if not placed:
             return {
                 "score": float("inf"),
@@ -320,6 +416,11 @@ class WarehouseSolver:
 
         placed = []
 
+        if not self.bay_types:
+            stats = self.compute_score(placed)
+            stats["solveTime"] = round(time.time() - start, 3)
+            return placed, stats
+
         min_dim = min(min(bt.w, bt.d) for bt in self.bay_types)
 
         # PASS 1: Strip packing
@@ -329,16 +430,10 @@ class WarehouseSolver:
         while y < self.max_y and time.time() - start < time_limit * 0.35:
             x = self.min_x
 
-            while x < self.max_x:
-                ok = False
-
-                for bt, ang in candidates:
-                    if self._do_place(x, y, bt, ang, placed):
-                        x = placed[-1].fp_bounds[2]
-                        ok = True
-                        break
-
-                if not ok:
+            while x < self.max_x and time.time() - start < time_limit * 0.35:
+                if self._do_place_best_q(x, y, candidates, placed):
+                    x = placed[-1].fp_bounds[2]
+                else:
                     x += step
 
             y += step
@@ -346,17 +441,14 @@ class WarehouseSolver:
         # PASS 2: Gap filling
         step2 = max(25.0, min_dim / 4)
 
-        for bt, ang in candidates:
-            if time.time() - start > time_limit * 0.65:
-                break
-
+        if time.time() - start <= time_limit * 0.65:
             y = self.min_y
 
-            while y < self.max_y:
+            while y < self.max_y and time.time() - start <= time_limit * 0.65:
                 x = self.min_x
 
-                while x < self.max_x:
-                    self._do_place(x, y, bt, ang, placed)
+                while x < self.max_x and time.time() - start <= time_limit * 0.65:
+                    self._do_place_best_q(x, y, candidates, placed)
                     x += step2
 
                 y += step2
@@ -384,13 +476,15 @@ class WarehouseSolver:
                 xs.add(v[0])
                 ys.add(v[1])
 
-            for bt, ang in candidates:
+            for y in sorted(ys):
                 if time.time() - start > time_limit * 0.95:
                     break
 
-                for y in sorted(ys):
-                    for x in sorted(xs):
-                        self._do_place(x, y, bt, ang, placed)
+                for x in sorted(xs):
+                    if time.time() - start > time_limit * 0.95:
+                        break
+
+                    self._do_place_best_q(x, y, candidates, placed)
 
         stats = self.compute_score(placed)
         stats["solveTime"] = round(time.time() - start, 3)
@@ -402,19 +496,23 @@ def parse_warehouse(text):
     return [
         tuple(map(float, l.split(",")))
         for l in text.strip().splitlines()
-        if l.strip() and not l.startswith("#")
+        if l.strip() and not l.strip().startswith("#")
     ]
 
 
 def parse_obstacles(text):
-    # Empty obstacles.csv means there are no obstacles.
-    if not text.strip():
+    """
+    Empty obstacles.csv means there are no obstacles.
+    Also handles files with only spaces or blank lines.
+    """
+
+    if not text or not text.strip():
         return []
 
     return [
         tuple(map(float, l.split(",")))
         for l in text.strip().splitlines()
-        if l.strip() and not l.startswith("#")
+        if l.strip() and not l.strip().startswith("#")
     ]
 
 
@@ -422,7 +520,7 @@ def parse_ceiling(text):
     return [
         tuple(map(float, l.split(",")))
         for l in text.strip().splitlines()
-        if l.strip() and not l.startswith("#")
+        if l.strip() and not l.strip().startswith("#")
     ]
 
 
@@ -430,5 +528,5 @@ def parse_bays(text):
     return [
         tuple(map(float, l.split(",")))
         for l in text.strip().splitlines()
-        if l.strip() and not l.startswith("#")
+        if l.strip() and not l.strip().startswith("#")
     ]

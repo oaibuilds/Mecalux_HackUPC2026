@@ -132,16 +132,41 @@ body{font-family:'Outfit',sans-serif;background:linear-gradient(145deg,var(--bg)
 </div>
 <div id="app"></div>
 <script>
-const S={step:'upload',files:{warehouse:null,obstacles:null,ceiling:null,bays:null},result:null,showGaps:true};
+const S={
+  step:'upload',
+  files:{warehouse:null,obstacles:null,ceiling:null,bays:null},
+  result:null,
+  showGaps:true,
+  showCeiling:true
+};
+
 const BC=['rgba(255,107,53,0.55)','rgba(0,150,255,0.55)','rgba(46,213,115,0.55)','rgba(255,71,87,0.55)','rgba(165,94,234,0.55)','rgba(255,215,0,0.55)','rgba(0,210,211,0.55)','rgba(255,159,243,0.55)'];
 const BB=['#ff6b35','#0096ff','#2ed573','#ff4757','#a55eea','#ffd700','#00d2d3','#ff9ff3'];
-const EX={warehouse:'0, 0\n10000, 0\n10000, 3000\n3000, 3000\n3000, 10000\n0, 10000',obstacles:'750, 750, 750, 750\n8000, 2500, 1500, 300\n1500, 4200, 200, 4600',ceiling:'0, 3000\n3000, 2000\n6000, 3000',bays:'0, 800, 1200, 2800, 200, 4, 2000\n1, 1600, 1200, 2800, 200, 8, 2500\n2, 2400, 1200, 2800, 200, 12, 2800\n3, 800, 1000, 1800, 150, 3, 1800\n4, 1600, 1000, 1800, 150, 6, 2300\n5, 2400, 1000, 1800, 150, 9, 2600'};
+
+const EX={
+warehouse:'0, 0\n10000, 0\n10000, 3000\n3000, 3000\n3000, 10000\n0, 10000',
+obstacles:'750, 750, 750, 750\n8000, 2500, 1500, 300\n1500, 4200, 200, 4600',
+ceiling:'0, 3000\n3000, 2000\n6000, 3000',
+bays:'0, 800, 1200, 2800, 200, 4, 2000\n1, 1600, 1200, 2800, 200, 8, 2500\n2, 2400, 1200, 2800, 200, 12, 2800\n3, 800, 1000, 1800, 150, 3, 1800\n4, 1600, 1000, 1800, 150, 6, 2300\n5, 2400, 1000, 1800, 150, 9, 2600'
+};
 
 function render(){
   const a=document.getElementById('app'),h=document.getElementById('ha');
-  if(S.step==='upload'){h.innerHTML='';a.innerHTML=renderUpload();bindUpload();}
-  else if(S.step==='solving'){h.innerHTML='';a.innerHTML='<div class="sv-pg ai"><div class="spin"></div><div style="font-size:22px;font-weight:700">Optimizing placement...</div><div style="color:var(--dim);font-size:14px;animation:pu 1.5s infinite">Running gap-aware multi-pass solver</div></div>';}
-  else if(S.step==='result'){h.innerHTML='<button class="btn btn-g btn-sm" onclick="resetApp()">↺ New</button> <button class="btn btn-p btn-sm" onclick="dlCSV()">↓ Download CSV</button>';a.innerHTML=renderResult();bindResult();}
+
+  if(S.step==='upload'){
+    h.innerHTML='';
+    a.innerHTML=renderUpload();
+    bindUpload();
+  }
+  else if(S.step==='solving'){
+    h.innerHTML='';
+    a.innerHTML='<div class="sv-pg ai"><div class="spin"></div><div style="font-size:22px;font-weight:700">Optimizing placement...</div><div style="color:var(--dim);font-size:14px;animation:pu 1.5s infinite">Running gap-aware multi-pass solver</div></div>';
+  }
+  else if(S.step==='result'){
+    h.innerHTML='<button class="btn btn-g btn-sm" onclick="resetApp()">↺ New</button> <button class="btn btn-p btn-sm" onclick="dlCSV()">↓ Download CSV</button>';
+    a.innerHTML=renderResult();
+    bindResult();
+  }
 }
 
 function renderUpload(){
@@ -163,23 +188,68 @@ function renderUpload(){
   }).join('')}</div>
   <div class="up-ac"><button class="btn btn-p" ${ok?'':'disabled'} onclick="go()">⚡ Optimize Warehouse</button><button class="btn btn-g btn-sm" onclick="ldEx()">Load Example Data</button></div></div>`;
 }
-function bindUpload(){['warehouse','obstacles','ceiling','bays'].forEach(k=>{const z=document.getElementById('z-'+k);if(z)z.addEventListener('click',()=>document.getElementById('f-'+k).click());});}
-window.hDrop=(e,k)=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f)f.text().then(t=>{S.files[k]=t;render();});};
-window.hFile=(k,inp)=>{const f=inp.files[0];if(f)f.text().then(t=>{S.files[k]=t;render();});};
-window.ldEx=()=>{S.files={...EX};render();};
+
+function bindUpload(){
+  ['warehouse','obstacles','ceiling','bays'].forEach(k=>{
+    const z=document.getElementById('z-'+k);
+    if(z)z.addEventListener('click',()=>document.getElementById('f-'+k).click());
+  });
+}
+
+window.hDrop=(e,k)=>{
+  e.preventDefault();
+  const f=e.dataTransfer.files[0];
+  if(f)f.text().then(t=>{S.files[k]=t;render();});
+};
+
+window.hFile=(k,inp)=>{
+  const f=inp.files[0];
+  if(f)f.text().then(t=>{S.files[k]=t;render();});
+};
+
+window.ldEx=()=>{
+  S.files={...EX};
+  render();
+};
 
 window.go=async()=>{
-  S.step='solving';render();
+  S.step='solving';
+  render();
+
   try{
-    const fd=new FormData();fd.append('warehouse',S.files.warehouse);fd.append('obstacles',S.files.obstacles);fd.append('ceiling',S.files.ceiling);fd.append('bays',S.files.bays);
-    const r=await fetch('/api/solve-text',{method:'POST',body:fd});const d=await r.json();
-    if(d.success){S.result=d;S.step='result';}else{alert('Error: '+d.error);S.step='upload';}
-  }catch(e){alert('Error: '+e.message);S.step='upload';}
+    const fd=new FormData();
+
+    const warehouseText = (S.files.warehouse || '').trim();
+    const obstaclesText = (S.files.obstacles || '').trim();
+    const ceilingText = (S.files.ceiling || '').trim();
+    const baysText = (S.files.bays || '').trim();
+
+    fd.append('warehouse', warehouseText);
+    fd.append('obstacles', obstaclesText === '' ? ' ' : obstaclesText);
+    fd.append('ceiling', ceilingText);
+    fd.append('bays', baysText);
+
+    const r=await fetch('/api/solve-text',{method:'POST',body:fd});
+    const d=await r.json();
+
+    if(d.success){
+      S.result=d;
+      S.step='result';
+    }else{
+      alert('Error: ' + (d.error || JSON.stringify(d.detail) || 'Unknown error'));
+      S.step='upload';
+    }
+  }catch(e){
+    alert('Error: '+e.message);
+    S.step='upload';
+  }
+
   render();
 };
 
 function renderResult(){
   const r=S.result,s=r.stats;
+
   return `<div class="rp ai"><div class="sb">
   <div class="sc"><div class="sv">${s.totalBays}</div><div class="sl">Bays Placed</div></div>
   <div class="sc"><div class="sv">${s.totalLoads}</div><div class="sl">Total Loads</div></div>
@@ -190,74 +260,213 @@ function renderResult(){
   <div class="sp">
     <div class="sh">Controls</div>
     <label class="tgl"><input type="checkbox" ${S.showGaps?'checked':''} onchange="S.showGaps=this.checked;bindResult()"> Show gap zones</label>
+    <label class="tgl"><input type="checkbox" ${S.showCeiling?'checked':''} onchange="S.showCeiling=this.checked;bindResult()"> Show ceiling zones</label>
+
     <div class="sh" style="margin-top:16px">Bay Types Legend</div>
-    ${r.bayTypes.map(bt=>{const c=r.placed.filter(p=>p.id===bt.id).length;const ci=bt.id%BC.length;
-    return `<div class="li"><div class="tp"><span class="ld" style="background:${BB[ci]}"></span><span style="font-weight:700;font-size:14px">Type ${bt.id}</span><span style="margin-left:auto;font-family:'JetBrains Mono';font-size:13px;color:${BB[ci]}">×${c}</span></div><div class="mt">${bt.w}×${bt.d}×${bt.h} | gap:${bt.gap} | ${bt.nLoads}L | $${bt.price}</div></div>`;}).join('')}
+    ${r.bayTypes.map(bt=>{
+      const c=r.placed.filter(p=>p.id===bt.id).length;
+      const ci=bt.id%BC.length;
+      return `<div class="li"><div class="tp"><span class="ld" style="background:${BB[ci]}"></span><span style="font-weight:700;font-size:14px">Type ${bt.id}</span><span style="margin-left:auto;font-family:'JetBrains Mono';font-size:13px;color:${BB[ci]}">×${c}</span></div><div class="mt">${bt.w}×${bt.d}×${bt.h} | gap:${bt.gap} | ${bt.nLoads}L | $${bt.price}</div></div>`;
+    }).join('')}
+
     <div class="sh" style="margin-top:22px">Output CSV</div>
     <div class="co">${r.csv}</div>
   </div></div></div>`;
 }
 
 function bindResult(){
-  const f=document.getElementById('vz');if(!f||!S.result)return;
+  const f=document.getElementById('vz');
+  if(!f||!S.result)return;
+
   const r=S.result,wh=r.warehouse;
+
   let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
-  wh.forEach(v=>{x0=Math.min(x0,v.x);y0=Math.min(y0,v.y);x1=Math.max(x1,v.x);y1=Math.max(y1,v.y);});
+  wh.forEach(v=>{
+    x0=Math.min(x0,v.x);
+    y0=Math.min(y0,v.y);
+    x1=Math.max(x1,v.x);
+    y1=Math.max(y1,v.y);
+  });
+
   const ww=x1-x0,hh=y1-y0,pad=Math.max(ww,hh)*0.05;
   const pts=wh.map(v=>`${v.x},${v.y}`).join(' ');
   const sw=Math.max(8,ww/200);
+
   let svg=`<svg viewBox="${x0-pad} ${y0-pad} ${ww+pad*2} ${hh+pad*2}" style="width:100%;height:100%;background:#0a0e17" xmlns="http://www.w3.org/2000/svg">`;
-  svg+=`<defs><pattern id="g" width="${Math.max(100,ww/50)}" height="${Math.max(100,hh/50)}" patternUnits="userSpaceOnUse"><path d="M ${Math.max(100,ww/50)} 0 L 0 0 0 ${Math.max(100,hh/50)}" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="${Math.max(1,ww/1000)}"/></pattern>`;
-  svg+=`<filter id="gl"><feGaussianBlur stdDeviation="${ww*0.003}" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>`;
+
+  svg+=`<defs>
+    <pattern id="g" width="${Math.max(100,ww/50)}" height="${Math.max(100,hh/50)}" patternUnits="userSpaceOnUse">
+      <path d="M ${Math.max(100,ww/50)} 0 L 0 0 0 ${Math.max(100,hh/50)}" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="${Math.max(1,ww/1000)}"/>
+    </pattern>
+    <filter id="gl">
+      <feGaussianBlur stdDeviation="${ww*0.003}" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="warehouseClip">
+      <polygon points="${pts}" />
+    </clipPath>
+  </defs>`;
+
   svg+=`<rect x="${x0-pad}" y="${y0-pad}" width="${ww+pad*2}" height="${hh+pad*2}" fill="url(#g)"/>`;
+
   svg+=`<polygon points="${pts}" fill="rgba(20,30,50,0.8)" stroke="#2a6fff" stroke-width="${sw}" filter="url(#gl)"/>`;
 
-  // Ceiling overlay
-  if(r.ceiling.length>1){const mh=Math.max(...r.ceiling.map(c=>c.h));let gs=r.ceiling.map(c=>`<stop offset="${((c.x-x0)/ww*100)}%" stop-color="rgba(0,150,255,${(c.h/mh)*0.12+0.02})"/>`).join('');svg+=`<defs><linearGradient id="cg" x1="0%" y1="0%" x2="100%" y2="0%">${gs}</linearGradient></defs><polygon points="${pts}" fill="url(#cg)"/>`;}
+  // Ceiling zones overlay
+  if(S.showCeiling && r.ceiling && r.ceiling.length > 0){
+    const ceiling = [...r.ceiling].sort((a,b)=>a.x-b.x);
+
+    const ceilingColors = [
+      'rgba(42,111,255,0.16)',
+      'rgba(46,213,115,0.16)',
+      'rgba(255,215,0,0.16)',
+      'rgba(255,107,53,0.16)',
+      'rgba(165,94,234,0.16)'
+    ];
+
+    for(let i=0; i<ceiling.length; i++){
+      const startX = Math.max(ceiling[i].x, x0);
+      const endX = i < ceiling.length - 1 ? Math.min(ceiling[i+1].x, x1) : x1;
+      const width = endX - startX;
+
+      if(width <= 0) continue;
+
+      const hVal = ceiling[i].h;
+      const color = ceilingColors[i % ceilingColors.length];
+
+      svg += `
+        <rect 
+          x="${startX}" 
+          y="${y0}" 
+          width="${width}" 
+          height="${hh}" 
+          fill="${color}" 
+          stroke="rgba(255,255,255,0.10)"
+          stroke-width="${Math.max(1,ww/900)}"
+          clip-path="url(#warehouseClip)"
+        />
+      `;
+
+      svg += `
+        <line 
+          x1="${startX}" 
+          y1="${y0}" 
+          x2="${startX}" 
+          y2="${y1}" 
+          stroke="rgba(255,255,255,0.18)" 
+          stroke-width="${Math.max(1,ww/700)}" 
+          stroke-dasharray="${ww/250} ${ww/300}"
+          clip-path="url(#warehouseClip)"
+        />
+      `;
+
+      const labelX = startX + width / 2;
+      const labelY = y0 + hh * 0.06;
+
+      svg += `
+        <text 
+          x="${labelX}" 
+          y="${labelY}" 
+          text-anchor="middle" 
+          dominant-baseline="central" 
+          fill="rgba(255,255,255,0.72)" 
+          font-weight="800" 
+          font-size="${Math.max(80, ww/95)}"
+          style="pointer-events:none;text-shadow:0 2px 4px rgba(0,0,0,0.8);"
+        >
+          ${hVal} mm
+        </text>
+      `;
+    }
+
+    svg += `
+      <line 
+        x1="${x1}" 
+        y1="${y0}" 
+        x2="${x1}" 
+        y2="${y1}" 
+        stroke="rgba(255,255,255,0.18)" 
+        stroke-width="${Math.max(1,ww/700)}" 
+        stroke-dasharray="${ww/250} ${ww/300}"
+        clip-path="url(#warehouseClip)"
+      />
+    `;
+  }
 
   // Obstacles
-  r.obstacles.forEach(o=>{svg+=`<rect x="${o.x}" y="${o.y}" width="${o.w}" height="${o.d}" fill="rgba(255,50,50,0.25)" stroke="#ff3232" stroke-width="${Math.max(3,ww/500)}" stroke-dasharray="${ww/100} ${ww/200}"/>`;svg+=`<line x1="${o.x}" y1="${o.y}" x2="${o.x+o.w}" y2="${o.y+o.d}" stroke="rgba(255,50,50,0.15)" stroke-width="${Math.max(2,ww/600)}"/>`;svg+=`<line x1="${o.x+o.w}" y1="${o.y}" x2="${o.x}" y2="${o.y+o.d}" stroke="rgba(255,50,50,0.15)" stroke-width="${Math.max(2,ww/600)}"/>`;});
+  r.obstacles.forEach(o=>{
+    svg+=`<rect x="${o.x}" y="${o.y}" width="${o.w}" height="${o.d}" fill="rgba(255,50,50,0.25)" stroke="#ff3232" stroke-width="${Math.max(3,ww/500)}" stroke-dasharray="${ww/100} ${ww/200}"/>`;
+    svg+=`<line x1="${o.x}" y1="${o.y}" x2="${o.x+o.w}" y2="${o.y+o.d}" stroke="rgba(255,50,50,0.15)" stroke-width="${Math.max(2,ww/600)}"/>`;
+    svg+=`<line x1="${o.x+o.w}" y1="${o.y}" x2="${o.x}" y2="${o.y+o.d}" stroke="rgba(255,50,50,0.15)" stroke-width="${Math.max(2,ww/600)}"/>`;
+  });
 
-  // Helper: polygon points string from coords array
-  function polyPts(coords){return coords.map(c=>c[0]+','+c[1]).join(' ');}
-  // Helper: centroid of a polygon coords array
+  function polyPts(coords){
+    return coords.map(c=>c[0]+','+c[1]).join(' ');
+  }
+
   function centroid(coords){
     let cx=0,cy=0;
     for(const c of coords){cx+=c[0];cy+=c[1];}
     return [cx/coords.length, cy/coords.length];
   }
-  // Helper: bounding box of coords
+
   function bbox(coords){
     let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
-    for(const c of coords){x0=Math.min(x0,c[0]);y0=Math.min(y0,c[1]);x1=Math.max(x1,c[0]);y1=Math.max(y1,c[1]);}
+    for(const c of coords){
+      x0=Math.min(x0,c[0]);
+      y0=Math.min(y0,c[1]);
+      x1=Math.max(x1,c[0]);
+      y1=Math.max(y1,c[1]);
+    }
     return {x0,y0,x1,y1,w:x1-x0,h:y1-y0};
   }
 
-  // Gap zones (render BEFORE bays — underneath)
-  if(S.showGaps){r.placed.forEach(b=>{
-    if(b.gapCoords&&b.gapCoords.length>2){
-      svg+=`<polygon points="${polyPts(b.gapCoords)}" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.15)" stroke-width="${Math.max(1,ww/600)}" stroke-dasharray="${ww/200} ${ww/300}"/>`;
-    }
-  });}
+  // Gap zones
+  if(S.showGaps){
+    r.placed.forEach(b=>{
+      if(b.gapCoords&&b.gapCoords.length>2){
+        svg+=`<polygon points="${polyPts(b.gapCoords)}" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.15)" stroke-width="${Math.max(1,ww/600)}" stroke-dasharray="${ww/200} ${ww/300}"/>`;
+      }
+    });
+  }
 
-  // Bays — draw as actual polygons using footprintCoords
+  // Bays
   r.placed.forEach((b,i)=>{
     const ci=b.id%BC.length;
     const coords=b.footprintCoords;
     if(!coords||coords.length<3)return;
+
     const ctr=centroid(coords);
     const bb=bbox(coords);
+
     svg+=`<polygon points="${polyPts(coords)}" fill="${BC[ci]}" stroke="${BB[ci]}" stroke-width="${Math.max(2,ww/400)}" style="cursor:pointer"><title>Bay #${b.id} | ${b.w}×${b.d} | rot=${b.rotation}° | ${b.nLoads} loads | $${b.price}</title></polygon>`;
+
     if(bb.w>ww*0.035&&bb.h>hh*0.025){
       svg+=`<text x="${ctr[0]}" y="${ctr[1]}" text-anchor="middle" dominant-baseline="central" fill="white" font-weight="700" font-size="${Math.min(bb.w,bb.h)*0.35}" style="pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,0.8)">${b.id}</text>`;
     }
   });
 
-  svg+='</svg>';f.innerHTML=svg;
+  svg+='</svg>';
+  f.innerHTML=svg;
 }
 
-window.resetApp=()=>{S.step='upload';S.files={warehouse:null,obstacles:null,ceiling:null,bays:null};S.result=null;render();};
-window.dlCSV=()=>{if(!S.result)return;const b=new Blob([S.result.csv],{type:'text/csv'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='solution.csv';a.click();URL.revokeObjectURL(u);};
+window.resetApp=()=>{
+  S.step='upload';
+  S.files={warehouse:null,obstacles:null,ceiling:null,bays:null};
+  S.result=null;
+  render();
+};
+
+window.dlCSV=()=>{
+  if(!S.result)return;
+  const b=new Blob([S.result.csv],{type:'text/csv'});
+  const u=URL.createObjectURL(b);
+  const a=document.createElement('a');
+  a.href=u;
+  a.download='solution.csv';
+  a.click();
+  URL.revokeObjectURL(u);
+};
+
 render();
 </script>
 </body></html>"""
