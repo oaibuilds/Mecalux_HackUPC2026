@@ -801,7 +801,8 @@ const S = {
   result: null,
   showGaps: true,
   showCeiling: true,
-  viewMode: '2d'
+  viewMode: '2d',
+  autoRotate3D: false
 };
 
 const SWATCH = [
@@ -1018,6 +1019,15 @@ function renderResult() {
               </label>
             </div>
             ${S.viewMode === '3d' ? `
+            <div class="tgl-row">
+              <span class="tgl-label">3D rotation</span>
+              <label class="tgl">
+                <input type="checkbox" ${S.autoRotate3D ? 'checked' : ''}
+                  onchange="S.autoRotate3D=this.checked;bindResult()">
+                <span class="tgl-track"></span>
+              </label>
+            </div>
+
             <div class="cam-row">
               <button class="cam-btn" onclick="set3DCamera('iso')">Isometric</button>
               <button class="cam-btn" onclick="set3DCamera('top')">Top</button>
@@ -1116,25 +1126,28 @@ function bindResult2D() {
   /* ceiling base */
   if (S.showCeiling && r.ceiling && r.ceiling.length) {
     const cl=[...r.ceiling].sort((a,b)=>a.x-b.x);
+    const ceilColors=['rgba(37,99,235,0.13)','rgba(22,163,74,0.13)','rgba(217,119,6,0.13)','rgba(220,38,38,0.13)','rgba(124,58,237,0.13)'];
+    const ceilStrokes=['rgba(37,99,235,0.70)','rgba(22,163,74,0.70)','rgba(217,119,6,0.70)','rgba(220,38,38,0.70)','rgba(124,58,237,0.70)'];
     cl.forEach((c,i)=>{
       const sx=Math.max(c.x,x0);
       const ex=i<cl.length-1?Math.min(cl[i+1].x,x1):x1;
       const w=ex-sx; if(w<=0)return;
       svg+=`<rect x="${sx}" y="${y0}" width="${w}" height="${hh}"
-        fill="rgba(255,255,255,0.022)" stroke="rgba(255,255,255,0.06)"
-        stroke-width="${Math.max(1,ww/900)}" clip-path="url(#wc)"/>`;
+        fill="${ceilColors[i%ceilColors.length]}" stroke="${ceilStrokes[i%ceilStrokes.length]}"
+        stroke-width="${Math.max(2,ww/600)}" clip-path="url(#wc)"/>`;
       svg+=`<line x1="${sx}" y1="${y0}" x2="${sx}" y2="${y1}"
-        stroke="rgba(255,255,255,0.08)" stroke-width="${Math.max(1,ww/700)}"
-        stroke-dasharray="${ww/250} ${ww/300}" clip-path="url(#wc)"/>`;
+        stroke="${ceilStrokes[i%ceilStrokes.length]}" stroke-width="${Math.max(2,ww/500)}"
+        stroke-dasharray="${ww/180} ${ww/250}" clip-path="url(#wc)"/>`;
       const lx=sx+w/2,ly=y0+hh*0.055;
       svg+=`<text x="${lx}" y="${ly}" text-anchor="middle" dominant-baseline="central"
-        fill="rgba(255,255,255,0.28)" font-weight="500"
+        fill="${ceilStrokes[i%ceilStrokes.length]}" font-weight="700"
         font-size="${Math.max(75,ww/110)}"
-        style="pointer-events:none">${c.h} mm</text>`;
+        style="pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,0.5)">${c.h} mm</text>`;
     });
+    // línia final dreta
     svg+=`<line x1="${x1}" y1="${y0}" x2="${x1}" y2="${y1}"
-      stroke="rgba(255,255,255,0.08)" stroke-width="${Math.max(1,ww/700)}"
-      stroke-dasharray="${ww/250} ${ww/300}" clip-path="url(#wc)"/>`;
+      stroke="${ceilStrokes[(cl.length-1)%ceilStrokes.length]}" stroke-width="${Math.max(2,ww/500)}"
+      stroke-dasharray="${ww/180} ${ww/250}" clip-path="url(#wc)"/>`;
   }
 
   /* obstacles */
@@ -1158,9 +1171,9 @@ function bindResult2D() {
     r.placed.forEach(b=>{
       if(b.gapCoords&&b.gapCoords.length>2){
         svg+=`<polygon points="${polyPts(b.gapCoords)}"
-          fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.07)"
-          stroke-width="${Math.max(1,ww/700)}"
-          stroke-dasharray="${ww/260} ${ww/320}"/>`;
+          fill="rgba(245,158,11,0.18)" stroke="rgba(245,158,11,0.80)"
+          stroke-width="${Math.max(2,ww/600)}"
+          stroke-dasharray="${ww/200} ${ww/280}"/>`;
       }
     });
   }
